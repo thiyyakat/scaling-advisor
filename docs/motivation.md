@@ -4,12 +4,12 @@
 
 ## Summary
 
-Gardener uses a [fork](https://github.com/gardener/autoscaler/tree/machine-controller-manager-provider/cluster-autoscaler) of upstream [Cluster-Autoscaler](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler) (a.k.a CA) to scale out/in Shoot clusters and it uses [machine-controller-manager](https://github.com/gardener/machine-controller-manager) (a.k.a MCM) to manage the lifecycle of machines. In the CA fork we have an in-tree implementation of [CloudProvider](https://github.com/gardener/autoscaler/blob/45e190f4bd7890e0029bef8eb9affa0946f135d5/cluster-autoscaler/cloudprovider/cloud_provider.go#L106) interface for [MCM](https://github.com/gardener/autoscaler/blob/45e190f4bd7890e0029bef8eb9affa0946f135d5/cluster-autoscaler/cloudprovider/mcm/mcm_cloud_provider.go#L69). Over several years of using these components together we have encountered numerous challenges and shortcomings when working with CA.
+Gardener uses a [fork](https://github.com/gardener/autoscaler/tree/machine-controller-manager-provider/cluster-autoscaler) of upstream [Cluster-Autoscaler](https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler) (a.k.a. CA) to scale out/in Shoot clusters and it uses [machine-controller-manager](https://github.com/gardener/machine-controller-manager) (a.k.a. MCM) to manage the lifecycle of machines. In the CA fork, we have an in-tree implementation of [CloudProvider](https://github.com/gardener/autoscaler/blob/45e190f4bd7890e0029bef8eb9affa0946f135d5/cluster-autoscaler/cloudprovider/cloud_provider.go#L106) interface for [MCM](https://github.com/gardener/autoscaler/blob/45e190f4bd7890e0029bef8eb9affa0946f135d5/cluster-autoscaler/cloudprovider/mcm/mcm_cloud_provider.go#L69). Over several years of using these components together, we have encountered numerous challenges and shortcomings when working with CA.
 
 This proposal highlights the following:
 
 * Challenges and the shortcomings of current CA and its interplay with MCM.
-* The extensive simulation environment that was built during the POC phase which provides capabilities to capture events from any Gardener cluster and replay the events on a local kubernetes cluster with virtual CA. This helped us capture and understand current CA's behavior, identify its shortcomings and compare the recommendations against the alternative recommendation system that we evaluated.
+* The extensive simulation environment that was built during the POC phase, which provides capabilities to capture events from any Gardener cluster and replay the events on a local kubernetes cluster with virtual CA. This helped us capture and understand the current CA's behavior, identify its shortcomings and compare the recommendations against the alternative recommendation system that we evaluated.
 * Provides a glimpse of the way forward from here.
 
 ## Motivation
@@ -32,7 +32,7 @@ Gardener provides capabilities to scale-in and scale-out a kubernetes cluster vi
 #### CA inherent design flaws
 
 * CA starts several go-routines calling methods on Cloud provider implementations, which can potentially lead to race conditions. One such [issue](https://github.com/gardener/autoscaler/pull/341) was identified, resulting in duplicate reduction of replicas for a MachineDeployment. This forced the developers to take a `sync.Mutex` to ensure that not more than one go-routine updates the replicas for a `MachineDeployment`. Upon reviewing other cloud provider implementations, such as `ClusterAPI`  we found they have also taken similar measures, as seen [here](https://github.com/kubernetes/autoscaler/blob/78c8173b979316f892327022d53369760b000210/cluster-autoscaler/cloudprovider/clusterapi/clusterapi_nodegroup.go#L105-L106). Using `sync.Mutex` can potentially cause deadlocks if not done right and also can result in a potential delay when running the reconciliation loop.
-* CA has become quite complex w.r.t to the number of tunable parameters. As of release v1.32.0 there are 113 CLI flags. Out of these 5 CLI flags are specific to cloud providers. This not only makes the usage challenging but due to a lot of in-tree cloud provider implementations it makes he API littered with cloud-provider specific CLI flags. At the time of writing this document, 15 CLI flags have been exposed to be directly set via the Shoot API.
+* CA has become quite complex w.r.t to the number of tunable parameters. As of release v1.32.0 there are 113 CLI flags. Out of these 5 CLI flags are specific to cloud providers. This not only makes the usage challenging but due to a lot of in-tree cloud provider implementations it makes the API littered with cloud-provider specific CLI flags. At the time of writing this document, 15 CLI flags have been exposed to be directly set via the Shoot API.
 * The current design and complexity of the code base makes it harder to make changes and maintain such changes across releases. See [Issue#5394](https://github.com/kubernetes/autoscaler/issues/5394) where it was proposed to split CA into provider agnostic and provider specific parts. It was further proposed to develop it into a pluggable library. This proposal was also discussed in autoscaler SIG group and was eventually rejected to high maintenance and possibility to introduce regressions.
 * CA does not follow kubernetes operator best practices. It does not expose scaling recommendations, scale up infos as consumable resources. It neither use client-go work queues nor controller-runtime which highlights its age. It is effectively a legacy software component which is difficult to debug.
 * It has been observed that CA has several stale fundamental issues. A few examples:
@@ -74,14 +74,13 @@ Gardener provides capabilities to scale-in and scale-out a kubernetes cluster vi
 * In Gardener a fork of the upstream Cluster Autoscaler is maintained. This entails investing regular effort in doing the following:
   * Rebasing at every release of upstream CA. If breaking changes are introduced then it takes significant time to analyse the impact of the changes to MCM CloudProvider implementation.
   * To minimise the 2-actor problems between CA and MCM, core CA code has been adapted/changed/commented. With every rebase care needs to be taken to ensure that modified code continues to work.
-  * The overall size of the CA repository is over 200Mb which includes the code multiple cloud provider implementations that is not consumed in Gardener. As a consequence local setup and development is resource heavy and slow.
+  * The overall size of the CA repository is over 200Mb which includes the code from multiple cloud provider implementations that is not consumed in Gardener. As a consequence local setup and development is resource heavy and slow.
 
 
 ##### Diagnostic challenges
 
 * Pod triggered scaled up events emitted by the CA are inaccurate since all the pods that were involved in the scale-out evaluation were logged as part of this triggered-scale-up-event. This set of pods is not neccessarily the set of pods that caused the actual scale up. This makes diagnostics trickier and developers needs to be trained to ignore these logs and only look at the final scale-out plan.
 * CA does not emit logs at the right log-level for critical failure in scaling-out NodeGroups. This forces the operators to change the log level to DEBUG to get this information which in turn results in an overload of logs.
-
 
 
 ## Way forward
@@ -101,7 +100,6 @@ Currently there are only [two cluster autoscaling implementations](https://kuber
 A proof-of-concept [Scaling Recommender](https://github.tools.sap/kubernetes/gardener-scaling-recommender) was envisaged which has single responsibility to provide scaling advice by leveraging the kubernetes kube-scheduler on the current cluster state.
 
 ![Scaling Recommender POC Flow](assets/poc-flow.png)
-
 
 
 #### Single actor responsibility
