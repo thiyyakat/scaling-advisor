@@ -148,7 +148,7 @@ Anectodally we observed that scaling recommender POC was faster than CA in compu
 ### Non Goal
 
 * Scaling recommender is independent of the Cluster API. Any VM lifecycle management component can leverage this as a library.
-* Scaling recommender will not revise the Gardener worker pool concept (See proposal: https://gist.github.tools.sap/D043832/f5d0ac0e0bb138eea07c84ac79e10ce9)
+* Scaling recommender will not revise the Gardener worker pool concept.
 
 
 
