@@ -4,9 +4,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.3
-  name: clusterscalingadvices.sr.gardener.cloud
+  name: clusterscalingadvices.sa.gardener.cloud
 spec:
-  group: sr.gardener.cloud
+  group: sa.gardener.cloud
   names:
     kind: ClusterScalingAdvice
     listKind: ClusterScalingAdviceList
@@ -42,14 +42,24 @@ spec:
           spec:
             description: Spec defines the specification of ClusterScalingAdvice.
             properties:
-              consumerID:
-                description: ConsumerID is the ID of the consumer who created the
-                  scaling constraints and is the target for cluster scaling advises.
-                type: string
+              constraintRef:
+                description: ConstraintRef is a reference to the ClusterScalingConstraint
+                  that this advice is based on.
+                properties:
+                  name:
+                    description: Name is the name of the ClusterScalingConstraint.
+                    type: string
+                  namespace:
+                    description: Namespace is the namespace of the ClusterScalingConstraint.
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
               scaleInPlan:
                 description: ScaleInPlan is the plan for scaling in across node pools.
                 properties:
-                  Items:
+                  items:
                     description: Items is the slice of scaling-in advice for a node
                       pool.
                     items:
@@ -90,7 +100,7 @@ spec:
                       type: string
                     type: array
                 required:
-                - Items
+                - items
                 - nodeNames
                 type: object
               scaleOutPlan:
@@ -136,44 +146,61 @@ spec:
                 - Items
                 type: object
             required:
-            - consumerID
+            - constraintRef
             - scaleInPlan
-            - scaleOutPlan
             type: object
           status:
             description: Status defines the status of ClusterScalingAdvice.
             properties:
-              backoffs:
-                description: Backoffs contains the backoff information for each instance
-                  type + zone.
-                items:
-                  description: ZoneInstanceTypeBackoff is the backoff information
-                    for each instance type + zone.
-                  properties:
-                    availabilityZone:
-                      description: AvailabilityZone is the availability zone of the
-                        node pool.
-                      type: string
-                    failCount:
-                      description: FailCount is the number of nodes that have failed
-                        creation.
-                      format: int32
-                      type: integer
-                    instanceType:
-                      description: InstanceType is the instance type of the node pool.
-                      type: string
-                    observedGeneration:
-                      description: ObservedGeneration is the generation of the ClusterScalingAdvice
-                        for which this backoff was created.
-                      format: int64
-                      type: integer
-                  required:
-                  - availabilityZone
-                  - failCount
-                  - instanceType
-                  - observedGeneration
-                  type: object
-                type: array
+              feedback:
+                description: Feedback represents the lifecycle manager's feedback
+                  on the scaling advice.
+                properties:
+                  scaleInErrorInfo:
+                    description: ScaleInErrorInfo is the scale-in error information
+                      for the scaling advice.
+                    properties:
+                      nodeNames:
+                        description: NodeNames is the list of node names that could
+                          not be deleted for scaled in.
+                        items:
+                          type: string
+                        type: array
+                    required:
+                    - nodeNames
+                    type: object
+                  scaleOutErrorInfos:
+                    description: ScaleOutErrorInfos is the list of scale-out errors
+                      for the scaling advice.
+                    items:
+                      description: ScaleOutErrorInfo is the backoff information for
+                        each instance type + zone.
+                      properties:
+                        availabilityZone:
+                          description: AvailabilityZone is the availability zone of
+                            the node pool.
+                          type: string
+                        errorType:
+                          description: ScalingErrorType defines the type of scaling
+                            error.
+                          type: string
+                        failCount:
+                          description: FailCount is the number of nodes that have
+                            failed creation.
+                          format: int32
+                          type: integer
+                        instanceType:
+                          description: InstanceType is the instance type of the node
+                            pool.
+                          type: string
+                      required:
+                      - availabilityZone
+                      - errorType
+                      - failCount
+                      - instanceType
+                      type: object
+                    type: array
+                type: object
             type: object
         required:
         - spec

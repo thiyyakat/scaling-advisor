@@ -11,7 +11,7 @@ import (
 
 const (
 	// GroupName is the name of the group for all scaling recommender custom resources.
-	GroupName = "sr.gardener.cloud"
+	GroupName = "sa.gardener.cloud"
 	// GroupVersion is the version of the group for all scaling recommender custom resources.
 	GroupVersion = "v1alpha1"
 )

@@ -4,6 +4,6 @@
 
 // +k8s:deepcopy-gen=package
 // +kubebuilder:object:generate=true
-// +groupName=sr.gardener.cloud
+// +groupName=sa.gardener.cloud
 
 package v1alpha1

@@ -28,7 +28,7 @@ function generate_deepcopy_defaulter() {
 
 function generate_crds() {
   local output_dir="${API_GO_MODULE_ROOT}/core/v1alpha1/crds"
-  local package="github.com/gardener/scaling-recommender/api/core/v1alpha1"
+  local package="github.com/gardener/scaling-advisor/api/core/v1alpha1"
   local package_path="$(go list -f '{{.Dir}}' "${package}")"
 
   if [ -z "${package_path}" ]; then

@@ -44,9 +44,9 @@ type ClusterScalingConstraintSpec struct {
 	NodePools []NodePool `json:"nodePools"`
 	// InstancePricing is a list of instance pricing for the node pool.
 	InstancePricing []InstancePricing `json:"instancePricing"`
-	// BackoffPolicy defines the backoff policy to be used when backing off from suggesting an instance type + zone in subsequence scaling advice upon failed scaling operation.
+	// DefaultBackoffPolicy defines a default backoff policy for all NodePools of a cluster. Backoff policy can be overridden at the NodePool level.
 	// +optional
-	BackoffPolicy *BackoffPolicy `json:"backoffPolicy"`
+	DefaultBackoffPolicy *BackoffPolicy `json:"defaultBackoffPolicy"`
 	// ScaleInPolicy defines the default scale in policy to be used when scaling in a node pool.
 	// +optional
 	ScaleInPolicy *ScaleInPolicy `json:"scaleInPolicy"`
@@ -79,6 +79,8 @@ type NodePool struct {
 	// ScaleInPolicy defines the scale in policy for this node pool.
 	// +optional
 	ScaleInPolicy *ScaleInPolicy `json:"scaleInPolicy"`
+	// BackoffPolicy defines the backoff policy applicable to resource exhaustion of any instance type + zone combination in this node pool.
+	BackoffPolicy *BackoffPolicy `json:"defaultBackoffPolicy"`
 }
 
 // NodeTemplate defines a node template configuration for an instance type.

@@ -34,9 +34,10 @@ type ClusterScalingAdviceList struct {
 
 // ClusterScalingAdviceSpec defines the desired state of ClusterScalingAdvice.
 type ClusterScalingAdviceSpec struct {
-	// ConsumerID is the ID of the consumer who created the scaling constraints and is the target for cluster scaling advises.
-	ConsumerID string `json:"consumerID"`
+	// ConstraintRef is a reference to the ClusterScalingConstraint that this advice is based on.
+	ConstraintRef ConstraintReference `json:"constraintRef"`
 	// ScaleOutPlan is the plan for scaling out across node pools.
+	// +optional
 	ScaleOutPlan *ScaleOutPlan `json:"scaleOutPlan"`
 	// ScaleInPlan is the plan for scaling in across node pools.
 	ScaleInPlan *ScaleInPlan `json:"scaleInPlan"`
@@ -44,8 +45,16 @@ type ClusterScalingAdviceSpec struct {
 
 // ClusterScalingAdviceStatus defines the observed state of ClusterScalingAdvice.
 type ClusterScalingAdviceStatus struct {
-	// Backoffs contains the backoff information for each instance type + zone.
-	Backoffs []ZoneInstanceTypeBackoff `json:"backoffs,omitempty"`
+	// Feedback represents the lifecycle manager's feedback on the scaling advice.
+	Feedback ClusterScalingAdviceFeedback `json:"feedback,omitempty"`
+}
+
+// ConstraintReference is a reference to the ClusterScalingConstraint for which this advice is generated.
+type ConstraintReference struct {
+	// Name is the name of the ClusterScalingConstraint.
+	Name string `json:"name"`
+	// Namespace is the namespace of the ClusterScalingConstraint.
+	Namespace string `json:"namespace"`
 }
 
 // ScaleOutPlan is the plan for scaling out a node pool.
@@ -57,7 +66,7 @@ type ScaleOutPlan struct {
 // ScaleInPlan is the plan for scaling in a node pool and/or targeted set of nodes.
 type ScaleInPlan struct {
 	// Items is the slice of scaling-in advice for a node pool.
-	Items []ScaleItem `json:"Items"`
+	Items []ScaleItem `json:"items"`
 	// NodeNames is the list of node names to be removed.
 	NodeNames []string `json:"nodeNames"`
 }
@@ -76,14 +85,38 @@ type ScaleItem struct {
 	DesiredReplicas int32 `json:"desiredReplicas"`
 }
 
-// ZoneInstanceTypeBackoff is the backoff information for each instance type + zone.
-type ZoneInstanceTypeBackoff struct {
+// ClusterScalingAdviceFeedback provides scale-in and scale-out error feedback from the lifecycle manager.
+// Scaling advisor can refine its future scaling advice based on this feedback.
+type ClusterScalingAdviceFeedback struct {
+	// ScaleOutErrorInfos is the list of scale-out errors for the scaling advice.
+	ScaleOutErrorInfos []ScaleOutErrorInfo `json:"scaleOutErrorInfos,omitempty"`
+	// ScaleInErrorInfo is the scale-in error information for the scaling advice.
+	ScaleInErrorInfo ScaleInErrorInfo `json:"scaleInErrorInfo,omitempty"`
+}
+
+// ScalingErrorType defines the type of scaling error.
+type ScalingErrorType string
+
+const (
+	// ErrorTypeResourceExhausted indicates that the lifecycle manager could not create the instance due to resource exhaustion for an instance type in an availability zone.
+	ErrorTypeResourceExhausted ScalingErrorType = "ResourceExhaustedError"
+	// ErrorTypeCreationTimeout indicates that the lifecycle manager could not create the instance within its configured timeout despite multiple attempts.
+	ErrorTypeCreationTimeout ScalingErrorType = "CreationTimeoutError"
+)
+
+// ScaleOutErrorInfo is the backoff information for each instance type + zone.
+type ScaleOutErrorInfo struct {
 	// AvailabilityZone is the availability zone of the node pool.
 	AvailabilityZone string `json:"availabilityZone"`
 	// InstanceType is the instance type of the node pool.
 	InstanceType string `json:"instanceType"`
 	// FailCount is the number of nodes that have failed creation.
-	FailCount int32 `json:"failCount"`
-	// ObservedGeneration is the generation of the ClusterScalingAdvice for which this backoff was created.
-	ObservedGeneration int64 `json:"observedGeneration"`
+	FailCount int32            `json:"failCount"`
+	ErrorType ScalingErrorType `json:"errorType"`
+}
+
+// ScaleInErrorInfo is the information about nodes that could not be deleted for scale-in.
+type ScaleInErrorInfo struct {
+	// NodeNames is the list of node names that could not be deleted for scaled in.
+	NodeNames []string `json:"nodeNames"`
 }

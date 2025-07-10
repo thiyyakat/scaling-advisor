@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	//go:embed sr.gardener.cloud_clusterscalingconstraints.yaml
+	//go:embed sa.gardener.cloud_clusterscalingconstraints.yaml
 	clusterScalingConstraintsCRD string
-	//go:embed sr.gardener.cloud_clusterscalingadvices.yaml
+	//go:embed sa.gardener.cloud_clusterscalingadvices.yaml
 	clusterScalingAdviceCRD string
 )
 
