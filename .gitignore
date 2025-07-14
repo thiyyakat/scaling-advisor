@@ -30,5 +30,4 @@ go.work.sum
 .DS_Store
 
 # hack tools binaries and generated configurations
-/hack/tools/bin/*
-api/hack/tools/bin/*
+**/bin/
