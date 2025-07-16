@@ -14,6 +14,10 @@ include $(HACK_DIR)/tools.mk
 tidy:
 	@env GO111MODULE=on go mod tidy
 
+.PHONY: build
+build:
+	go build ./...
+
 .PHONY: check-generate
 check-generate:
 	@$(HACK_DIR)/check-generate.sh "$(API_MODULE_ROOT)"

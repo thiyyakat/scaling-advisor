@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/gardener/scaling-advisor/common/cli"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -11,11 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-var (
-	ProgramName = "minkapi"
-)
-
 const (
+	ProgramName           = "minkapi"
 	DefaultHost           = "localhost"
 	DefaultPort           = 8008
 	DefaultWatchQueueSize = 100
@@ -25,24 +23,11 @@ const (
 )
 
 type MinKAPIConfig struct {
-	// Host name/IP address for the MinKAPI service.By default this is localhost as MinKAPI is meant to be used as a local helper serivice.
-	// Use "0.0.0.0"  to bind to all interfaces.
-	Host string
-
-	// Port is the HTTP port on which the MinKAPI service listens for KAPI requests.
-	Port int
-
-	// KubeConfigPath is the path at which MinKAPI generates a kubeconfig that can be used by kubectl and other k8s clients to connect to MinKAPI
-	KubeConfigPath string
-
+	cli.CommonOptions
 	// WatchTimeout represents the timeout for watches following which MinKAPI service will close the connection and ends the watch.
 	WatchTimeout time.Duration
-
 	// WatchQueueSize is the maximum number of events to queue per watcher
 	WatchQueueSize int
-
-	// ProfilingEnable indicates whether the minkapi service should register the standard pprof HTTP handlers: /debug/pprof/*
-	ProfilingEnabled bool
 }
 
 type MinKAPIAccess interface {

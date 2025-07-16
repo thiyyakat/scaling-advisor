@@ -68,7 +68,7 @@ func NewInMemoryMinKAPI(appCtx context.Context, cfg api.MinKAPIConfig, log logr.
 		scheme: typeinfo.SupportedScheme,
 		mux:    mux,
 		server: &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+			Addr:    net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 			Handler: mux,
 			BaseContext: func(_ net.Listener) context.Context {
 				return appCtx

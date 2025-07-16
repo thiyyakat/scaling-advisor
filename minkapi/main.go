@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	clicommon "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/cli"
 	"github.com/gardener/scaling-advisor/minkapi/core"
@@ -16,14 +17,14 @@ import (
 )
 
 func main() {
-	cli.PrintVersion()
+	clicommon.PrintVersion(api.ProgramName)
 	mainOpts, err := cli.ParseProgramFlags(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return
 		}
 		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
-		os.Exit(cli.ExitErrParseOpts)
+		os.Exit(clicommon.ExitErrParseOpts)
 	}
 	// Set up logr with klog backend using NewKlogr
 	log := klog.NewKlogr()
@@ -44,23 +45,22 @@ func main() {
 			} else {
 				log.Error(err, fmt.Sprintf("%s start failed", api.ProgramName), err)
 			}
-			os.Exit(cli.ExitErrStart)
+			os.Exit(clicommon.ExitErrStart)
 		}
 	}()
 
 	// Wait for a signal
 	<-appCtx.Done()
-	stop()
 	log.Info("Received shutdown signal, initiating graceful shutdown")
 
 	// Create a context with a 5-second timeout for shutdown
-	shutDownCtx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	shutDownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Perform shutdown
 	if err := service.Shutdown(shutDownCtx); err != nil {
 		log.Error(err, fmt.Sprintf(" %s shutdown failed", api.ProgramName))
-		os.Exit(cli.ExitErrShutdown)
+		os.Exit(clicommon.ExitErrShutdown)
 	}
 	log.Info(fmt.Sprintf("%s shutdown gracefully.", api.ProgramName))
 }

@@ -28,6 +28,11 @@ test-unit/cover:
 upgradeable:
 	@go list -u -f '{{if (and (not (or .Main .Indirect)) .Update)}}{{.Path}}: {{.Version}} -> {{.Update.Version}}{{end}}' -m all
 
+## tidy: tidies up go mod
+.PHONY: tidy
+tidy:
+	@env GO111MODULE=on go mod tidy
+
 ## build: build the service
 .PHONY: build
 build:

@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	clicommon "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/tools/clientcmd"
@@ -13,6 +14,7 @@ import (
 
 // MainOpts is a struct that encapsulates target fields for CLI options parsing.
 type MainOpts struct {
+	clicommon.CommonOptions
 	api.MinKAPIConfig
 }
 
@@ -37,13 +39,9 @@ func SetupFlagsToOpts() (*pflag.FlagSet, *MainOpts) {
 	if mainOpts.KubeConfigPath == "" {
 		mainOpts.KubeConfigPath = api.DefaultKubeConfigPath
 	}
-	flagSet.StringVarP(&mainOpts.KubeConfigPath, clientcmd.RecommendedConfigPathFlag, "k", mainOpts.KubeConfigPath, "path to generate kubeconfig - fallback to KUBECONFIG env-var or "+api.DefaultKubeConfigPath)
-	//downloadFlags.StringVarP(&mainOpts.ControlKubeConfigPath, "kubeconfig-control", "c", os.Getenv("CONTROL_KUBECONFIG"), "kubeconfig path of shoot control plane (seed kubeconfig) - defaults to CONTROL_KUBECONFIG env-var")
-	flagSet.StringVarP(&mainOpts.Host, "host", "H", api.DefaultHost, "host name to bind the MinKAPI service. Use 0.0.0.0 for all interfaces")
-	flagSet.IntVarP(&mainOpts.Port, "port", "P", api.DefaultPort, "listen port for REST API")
+	clicommon.MapCommonFlags(flagSet, &mainOpts.CommonOptions)
 	flagSet.IntVarP(&mainOpts.WatchQueueSize, "watch-queue-size", "s", api.DefaultWatchQueueSize, "max number of events to queue per watcher")
 	flagSet.DurationVarP(&mainOpts.WatchTimeout, "watch-timeout", "t", api.DefaultWatchTimeout, "watch timeout after which connection is closed and watch removed")
-	flagSet.BoolVarP(&mainOpts.ProfilingEnabled, "pprof", "p", false, "enable pprof profiling")
 
 	klogFlagSet := flag.NewFlagSet("klog", flag.ContinueOnError)
 	klog.InitFlags(klogFlagSet)
