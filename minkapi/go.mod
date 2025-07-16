@@ -3,7 +3,6 @@ module github.com/gardener/scaling-advisor/minkapi
 go 1.24.5
 
 require (
-	github.com/gardener/scaling-advisor/api v0.0.0
 	github.com/gardener/scaling-advisor/common v0.0.0
 	github.com/go-logr/logr v1.4.3
 	github.com/spf13/pflag v1.0.6
@@ -14,6 +13,11 @@ require (
 	k8s.io/client-go v0.33.3
 	k8s.io/klog/v2 v2.130.1
 	sigs.k8s.io/yaml v1.5.0
+)
+
+replace (
+	github.com/gardener/scaling-advisor/api => ../api
+	github.com/gardener/scaling-advisor/common => ../common
 )
 
 require (
