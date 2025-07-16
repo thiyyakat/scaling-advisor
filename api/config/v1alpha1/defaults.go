@@ -8,7 +8,7 @@ import (
 
 const (
 	defaultLeaderElectionResourceLock = "leases"
-	defaultLeaderElectionResourceName = "scaling-advisor-operator-leader-election"
+	defaultLeaderElectionResourceName = "scalingadvisor-operator-leader-election"
 	defaultHealthProbePort            = 2751
 	defaultMetricsPort                = 2752
 )
@@ -23,7 +23,7 @@ func SetDefaults_ClientConnectionConfiguration(clientConnConfig *ClientConnectio
 	}
 }
 
-// SetDefaults_LeaderElectionConfiguration sets defaults for the leader election of the scaling-advisor operator.
+// SetDefaults_LeaderElectionConfiguration sets defaults for the leader election of the scalingadvisor operator.
 func SetDefaults_LeaderElectionConfiguration(leaderElectionConfig *LeaderElectionConfiguration) {
 	zero := metav1.Duration{}
 	if leaderElectionConfig.LeaseDuration == zero {

@@ -7,7 +7,7 @@ import (
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// OperatorConfiguration defines the configuration for the scaling-advisor operator.
+// OperatorConfiguration defines the configuration for the scalingadvisor operator.
 type OperatorConfiguration struct {
 	metav1.TypeMeta `json:",inline"`
 	// ClientConnection defines the configuration for constructing a kube client.

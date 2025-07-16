@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	clicommon "github.com/gardener/scaling-advisor/common/cli"
+	commoncli "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/cli"
 	"github.com/gardener/scaling-advisor/minkapi/core"
@@ -17,14 +17,14 @@ import (
 )
 
 func main() {
-	clicommon.PrintVersion(api.ProgramName)
+	commoncli.PrintVersion(api.ProgramName)
 	mainOpts, err := cli.ParseProgramFlags(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
 			return
 		}
 		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
-		os.Exit(clicommon.ExitErrParseOpts)
+		os.Exit(commoncli.ExitErrParseOpts)
 	}
 	// Set up logr with klog backend using NewKlogr
 	log := klog.NewKlogr()
@@ -45,7 +45,7 @@ func main() {
 			} else {
 				log.Error(err, fmt.Sprintf("%s start failed", api.ProgramName), err)
 			}
-			os.Exit(clicommon.ExitErrStart)
+			os.Exit(commoncli.ExitErrStart)
 		}
 	}()
 
@@ -60,7 +60,7 @@ func main() {
 	// Perform shutdown
 	if err := service.Shutdown(shutDownCtx); err != nil {
 		log.Error(err, fmt.Sprintf(" %s shutdown failed", api.ProgramName))
-		os.Exit(clicommon.ExitErrShutdown)
+		os.Exit(commoncli.ExitErrShutdown)
 	}
 	log.Info(fmt.Sprintf("%s shutdown gracefully.", api.ProgramName))
 }

@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-main_package_path = .
-binary_name = scaling-advisor
+main_path = cmd/scalingadvisor/main.go
+binary_name = scalingadvisor
 
 .PHONY: tidy
 tidy:
@@ -12,5 +12,4 @@ tidy:
 .PHONY: build
 build:
 	mkdir -p bin
-    # Include additional build steps, like TypeScript, SCSS or Tailwind compilation here...
-	go build -buildvcs -o=bin/${binary_name} ${main_package_path}
+	go build -buildvcs -o=bin/${binary_name} ${main_path}
