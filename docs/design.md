@@ -1,7 +1,7 @@
 # Scaling Advisor Design 
 
 > [!WARNING]
-> Wokk In Progress 
+> Work In Progress 
 
 ## High-Level Picture
 
