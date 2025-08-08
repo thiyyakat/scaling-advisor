@@ -21,3 +21,24 @@ const (
 	// KindClusterScalingConstraint is the KIND for constraint object that is reconciled by the scaling-advisor operator in order to generate the scaling advice.
 	KindClusterScalingConstraint = "ClusterScalingConstraint"
 )
+
+const (
+	// AnnotationEnableScalingDiagnostics is the annotation key to enable scaling diagnostics for a cluster.
+	// This is applied by a user/tool on the ClusterScalingConstraint object which produces diagnostics withing
+	// the generated ClusterScalingAdvice.Status.
+	AnnotationEnableScalingDiagnostics = "sa.gardener.cloud/enable-scaling-diagnostics"
+)
+
+const (
+	// LabelSimulationID is the label key to identify simulation objects for a specific simulation run.
+	// The value of the label is the simulation ID.
+	LabelSimulationID = "sa.gardener.cloud/simulation-id"
+)
+
+const (
+	DefaultMinKAPIPort             = 8084
+	DefaultOperatorServerPort      = 8085
+	DefaultOperatorHealthProbePort = 8086
+	DefaultOperatorMetricsPort     = 8087
+	DefaultOperatorProfilingPort   = 8088
+)
