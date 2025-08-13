@@ -75,6 +75,6 @@ func SetDefaults_ServerConfig(serverCfg *commontypes.ServerConfig) {
 // SetDefaults_ScalingConstraintsControllerConfiguration sets defaults for the ScalingConstraintsControllerConfiguration.
 func SetDefaults_ScalingConstraintsControllerConfiguration(scalingConstraintsConfig *ScalingConstraintsControllerConfiguration) {
 	if scalingConstraintsConfig.ConcurrentSyncs == nil {
-		scalingConstraintsConfig.ConcurrentSyncs = ptr.To(3)
+		scalingConstraintsConfig.ConcurrentSyncs = ptr.To(1)
 	}
 }

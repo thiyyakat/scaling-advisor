@@ -9,8 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/rand"
-	"k8s.io/client-go/dynamic/dynamicinformer"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/kubernetes/pkg/scheduler"
 	schedulerapiconfig "k8s.io/kubernetes/pkg/scheduler/apis/config"
@@ -102,15 +100,13 @@ func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn 
 		}
 	}()
 	log := logr.FromContextOrDiscard(ctx)
-	informerFactory := informers.NewSharedInformerFactory(params.Client, 0)
-	dynInformerFactory := dynamicinformer.NewDynamicSharedInformerFactory(params.DynClient, 0)
 	broadcaster := events.NewBroadcaster(params.EventSink)
 	recorderFactory := profile.NewRecorderFactory(broadcaster)
 	sched, err := scheduler.New(
 		ctx,
 		params.Client,
-		informerFactory,
-		dynInformerFactory,
+		params.InformerFactory,
+		params.DynInformerFactory,
 		recorderFactory,
 		scheduler.WithProfiles(s.schedulerConfig.Profiles...),
 		scheduler.WithPercentageOfNodesToScore(s.schedulerConfig.PercentageOfNodesToScore),
@@ -120,11 +116,11 @@ func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn 
 	if err != nil {
 		return
 	}
-	informerFactory.Start(ctx.Done())
-	dynInformerFactory.Start(ctx.Done())
+	params.InformerFactory.Start(ctx.Done())
+	params.DynInformerFactory.Start(ctx.Done())
 
-	informerFactory.WaitForCacheSync(ctx.Done())
-	dynInformerFactory.WaitForCacheSync(ctx.Done())
+	params.InformerFactory.WaitForCacheSync(ctx.Done())
+	params.DynInformerFactory.WaitForCacheSync(ctx.Done())
 
 	if err = sched.WaitForHandlersSync(ctx); err != nil {
 		return

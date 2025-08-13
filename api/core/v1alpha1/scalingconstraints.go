@@ -44,8 +44,6 @@ type ClusterScalingConstraintSpec struct {
 	AdviceGenerationMode ScalingAdviceGenerationMode `json:"adviceGenerationMode"`
 	// NodePools is the list of node pools to choose from when creating scaling advice.
 	NodePools []NodePool `json:"nodePools"`
-	// InstancePricing is a list of instance pricing for the node pool.
-	InstancePricing []InstancePricing `json:"instancePricing"`
 	// DefaultBackoffPolicy defines a default backoff policy for all NodePools of a cluster. Backoff policy can be overridden at the NodePool level.
 	// +optional
 	DefaultBackoffPolicy *BackoffPolicy `json:"defaultBackoffPolicy"`
@@ -79,6 +77,8 @@ type NodePool struct {
 	Name string `json:"name"`
 	// Region is the name of the region.
 	Region string `json:"region"`
+	// Priority is the priority of the node pool.
+	Priority int32 `json:"priority"`
 	// Labels is a map of key/value pairs for labels applied to all the nodes in this node pool.
 	Labels map[string]string `json:"labels"`
 	// Annotations is a map of key/value pairs for annotations applied to all the nodes in this node pool.
@@ -108,7 +108,7 @@ type NodeTemplate struct {
 	// InstanceType is the instance type of the node template.
 	InstanceType string `json:"instanceType"`
 	// Priority is the priority of the node template. The lower the number, the higher the priority.
-	Priority uint16 `json:"priority"`
+	Priority int32 `json:"priority"`
 	// Capacity defines the capacity of resources that are available for this instance type.
 	Capacity corev1.ResourceList `json:"capacity"`
 	// KubeReserved defines the capacity for kube reserved resources.

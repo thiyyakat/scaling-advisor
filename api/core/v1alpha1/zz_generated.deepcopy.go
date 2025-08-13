@@ -220,13 +220,6 @@ func (in *ClusterScalingConstraintSpec) DeepCopyInto(out *ClusterScalingConstrai
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
-	if in.InstancePricing != nil {
-		in, out := &in.InstancePricing, &out.InstancePricing
-		*out = make([]InstancePricing, len(*in))
-		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
-		}
-	}
 	if in.DefaultBackoffPolicy != nil {
 		in, out := &in.DefaultBackoffPolicy, &out.DefaultBackoffPolicy
 		*out = new(BackoffPolicy)

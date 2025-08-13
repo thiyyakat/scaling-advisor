@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	corev1alpha1 "github.com/gardener/scaling-advisor/api/core/v1alpha1"
 	mkapi "github.com/gardener/scaling-advisor/minkapi/api"
 	corev1 "k8s.io/api/core/v1"
@@ -35,12 +36,21 @@ const (
 	ScalingAdviceResponseTypeComplete ScalingAdviceResponseType = "Complete"
 )
 
+type ScalingAdviceGenerationStrategy string
+
+const (
+	IncrementalScalingAdviceGenerationStrategy ScalingAdviceGenerationStrategy = "Incremental"
+	AllInOneScalingAdviceGenerationStrategy    ScalingAdviceGenerationStrategy = "AllInOne"
+)
+
 // ScalingAdviceRequest encapsulates the request parameters for generating scaling advice.
 type ScalingAdviceRequest struct {
 	// ID is the unique identifier for the request.
 	ID string
 	// CorrelationID is the correlation identifier for the request, used to correlate a request and one or more responses.
 	CorrelationID string
+	// GenerationStrategy
+	GenerationStrategy ScalingAdviceGenerationStrategy
 	// Constraint is the cluster scaling constraint using which the scaling advice is generated.
 	Constraint corev1alpha1.ClusterScalingConstraint
 	// Snapshot is the snapshot of the resources in the cluster at the time of the request.
@@ -126,6 +136,16 @@ type ClusterSnapshot struct {
 	RuntimeClasses []nodev1.RuntimeClass
 }
 
+func (c *ClusterSnapshot) GetUnscheduledPods() []PodInfo {
+	var unscheduledPods []PodInfo
+	for _, pod := range c.Pods {
+		if pod.NodeName == "" {
+			unscheduledPods = append(unscheduledPods, pod)
+		}
+	}
+	return unscheduledPods
+}
+
 // PodInfo contains the minimum set of information about corev1.Pod that will be required by the kube-scheduler.
 // NOTES:
 //  1. PodSchedulingGates is not part of PodInfo. It is expected that pods having scheduling gates will be filtered out before setting up simulation runs.
@@ -156,9 +176,19 @@ type PodInfo struct {
 	ResourceClaims            []corev1.PodResourceClaim
 }
 
+func (p *PodInfo) GetResourceInfo() PodResourceInfo {
+	return PodResourceInfo{
+		UID:                p.UID,
+		NamespacedName:     p.NamespacedName,
+		AggregatedRequests: p.AggregatedRequests,
+	}
+}
+
 // NodeInfo contains the minimum set of information about corev1.Node that will be required by the kube-scheduler.
 type NodeInfo struct {
 	ResourceMeta
+	// InstanceType is the instance type for the Node.
+	InstanceType string
 	// Unschedulable indicates whether the node is unschedulable.
 	Unschedulable bool
 	// Taints are the node's taints.
@@ -172,12 +202,94 @@ type NodeInfo struct {
 	CSIDriverVolumeMaximums map[string]int32
 }
 
+func (n *NodeInfo) GetResourceInfo() NodeResourceInfo {
+	return NodeResourceInfo{
+		Name:         n.Name,
+		InstanceType: n.InstanceType,
+		Capacity:     n.Capacity,
+		Allocatable:  n.Allocatable,
+	}
+}
+
 type ResourceMeta struct {
 	// UID is the unique identifier for the resource.
-	UID string
+	UID types.UID
 	types.NamespacedName
 	// Labels are the labels associated with the resource.
 	Labels map[string]string
 	// DeletionTimestamp is the timestamp when the resource deletion was triggered.
 	DeletionTimestamp time.Time
 }
+
+// NodeScore to be documented later.
+type NodeScore struct {
+	// SimulationName is the unique name of the simulation that produces this NodeScore.
+	SimulationName string
+	// Placement represents the placement information for the Node.
+	Placement       NodePlacementInfo
+	UnscheduledPods []PodResourceInfo
+	// Value is the score value for this Node.
+	Value int
+}
+
+type InstancePricing interface {
+	GetPrice(region, instanceType string) (float64, error)
+}
+type GetInstancePricing func(provider commontypes.CloudProvider, pricingDataPath string) (InstancePricing, error)
+
+type NodeScorer interface {
+	Compute(args NodeScoreArgs) (NodeScore, error)
+}
+
+type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing) (NodeScorer, error)
+
+type PodResourceInfo struct {
+	UID types.UID
+	types.NamespacedName
+	// AggregatedRequests is an aggregated resource requests for all containers of the Pod.
+	AggregatedRequests corev1.ResourceList
+}
+
+// NodeResourceInfo represents the subset of NodeInfo such that NodeScorer can compute an effective NodeScore.
+// TODO think of a better name.
+type NodeResourceInfo struct {
+	Name         string
+	InstanceType string
+	// Capacity is the total resource capacity of the node.
+	Capacity corev1.ResourceList
+	// Allocatable is the allocatable resource capacity of the node.
+	Allocatable corev1.ResourceList
+}
+
+type NodePlacementInfo struct {
+	// NodePoolName is the name of the node pool.
+	NodePoolName string
+	// NodeTemplateName is the name of the node template.
+	NodeTemplateName string
+	// InstanceType is the instance type of the Node.
+	InstanceType string
+	// AvailabilityZone is the availability zone of the node pool.
+	AvailabilityZone string
+}
+
+type NodeScoreArgs struct {
+	// SimulationName is the unique simulation name.
+	SimulationName string
+	// Placement represents the placement information for the Node.
+	Placement NodePlacementInfo
+	// ScaledAssignment represents the assignment of the scaled Node for the current run.
+	ScaledAssignment *NodePodAssignment
+	// Assignments represents the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
+	// or it is a winning simulated Node from a previous run.
+	Assignments     []*NodePodAssignment
+	UnscheduledPods []*PodResourceInfo
+}
+
+type NodePodAssignment struct {
+	Node          *NodeResourceInfo
+	ScheduledPods []*PodResourceInfo
+}
+
+// NodeScoreSelector selects the winning NodeScore amongst the NodeScores of a given simulation pass and returns its index.
+// If there is no winning node score then it returns -1.
+type NodeScoreSelector func(nodeScores ...NodeScore) int

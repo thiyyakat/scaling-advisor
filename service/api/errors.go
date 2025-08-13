@@ -14,4 +14,9 @@ var (
 	ErrLoadSchedulerConfig = errors.New("failed to load scheduler configuration")
 	// ErrLaunchScheduler is a sentinel error indicating that the service failed to launch the scheduler.
 	ErrLaunchScheduler = errors.New("failed to launch scheduler")
+	// ErrNoUnscheduledPods is a sentinel error indicating that the service was wrongly invoked with no unscheduled pods.
+	ErrNoUnscheduledPods              = errors.New("no unscheduled pods")
+	ErrNoScalingAdvice                = errors.New("no scaling advice")
+	ErrUnsupportedNodeScoringStrategy = errors.New("unsupported node scoring strategy")
+	ErrUnsupportedCloudProvider       = errors.New("unsupported cloud provider")
 )

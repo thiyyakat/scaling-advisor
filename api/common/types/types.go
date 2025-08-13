@@ -34,3 +34,21 @@ type ConstraintReference struct {
 	// Namespace is the namespace of the ClusterScalingConstraint.
 	Namespace string `json:"namespace"`
 }
+
+// NodeScoringStrategy
+type NodeScoringStrategy string
+
+const (
+	LeastWasteNodeScoringStrategy NodeScoringStrategy = "LeastWaste"
+	LeastCostNodeScoringStrategy  NodeScoringStrategy = "LeastCost"
+)
+
+type CloudProvider string
+
+const (
+	AWSCloudProvider       CloudProvider = "aws"
+	GCPCloudProvider       CloudProvider = "gcp"
+	AzureCloudProvider     CloudProvider = "azure"
+	AliCloudProvider       CloudProvider = "ali"
+	OpenStackCloudProvider CloudProvider = "openstack"
+)

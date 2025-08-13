@@ -68,35 +68,6 @@ spec:
                 - initialBackoff
                 - maxBackoff
                 type: object
-              instancePricing:
-                description: InstancePricing is a list of instance pricing for the
-                  node pool.
-                items:
-                  description: InstancePricing contains the pricing information for
-                    an instance type.
-                  properties:
-                    instanceType:
-                      description: InstanceType is the instance type of the node template.
-                      type: string
-                    price:
-                      description: Price is the total price of the instance type.
-                      format: double
-                      type: number
-                    unitCPUPrice:
-                      description: UnitCPUPrice is the price per CPU of the instance
-                        type.
-                      format: double
-                      type: number
-                    unitMemoryPrice:
-                      description: UnitMemoryPrice is the price per memory of the
-                        instance type.
-                      format: double
-                      type: number
-                  required:
-                  - instanceType
-                  - price
-                  type: object
-                type: array
               nodePools:
                 description: NodePools is the list of node pools to choose from when
                   creating scaling advice.
@@ -203,6 +174,7 @@ spec:
                           priority:
                             description: Priority is the priority of the node template.
                               The lower the number, the higher the priority.
+                            format: int32
                             type: integer
                           systemReservedCapacity:
                             additionalProperties:
@@ -225,6 +197,10 @@ spec:
                         - priority
                         type: object
                       type: array
+                    priority:
+                      description: Priority is the priority of the node pool.
+                      format: int32
+                      type: integer
                     quota:
                       additionalProperties:
                         anyOf:
@@ -281,6 +257,7 @@ spec:
                   - labels
                   - name
                   - nodeTemplates
+                  - priority
                   - quota
                   - region
                   - taints
@@ -293,7 +270,6 @@ spec:
             required:
             - adviceGenerationMode
             - consumerID
-            - instancePricing
             - nodePools
             type: object
           status:
