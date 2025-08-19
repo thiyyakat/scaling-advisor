@@ -282,7 +282,7 @@ type NodeScoreArgs struct {
 	// Assignments represents the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
 	// or it is a winning simulated Node from a previous run.
 	Assignments     []*NodePodAssignment
-	UnscheduledPods []*PodResourceInfo
+	UnscheduledPods []PodResourceInfo
 }
 
 type NodePodAssignment struct {
