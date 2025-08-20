@@ -241,7 +241,8 @@ type NodeScorer interface {
 	Compute(args NodeScoreArgs) (NodeScore, error)
 }
 
-type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing) (NodeScorer, error)
+type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing, weights map[corev1.ResourceName]float64) (NodeScorer, error)
+type GetNodeScoreSelector func(scoringStrategy commontypes.NodeScoringStrategy) (NodeScoreSelector, error)
 
 type PodResourceInfo struct {
 	UID types.UID
@@ -292,4 +293,4 @@ type NodePodAssignment struct {
 
 // NodeScoreSelector selects the winning NodeScore amongst the NodeScores of a given simulation pass and returns its index.
 // If there is no winning node score then it returns -1.
-type NodeScoreSelector func(nodeScores ...NodeScore) int
+type NodeScoreSelector func(nodeScores []NodeScore) int

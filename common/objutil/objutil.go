@@ -6,6 +6,7 @@ package objutil
 
 import (
 	"bytes"
+	corev1 "k8s.io/api/core/v1"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,4 +37,12 @@ func LoadYAMLIntoRuntimeObject(yamlPath string, s *runtime.Scheme, obj runtime.O
 		return err
 	}
 	return nil
+}
+
+func ResourceListToMapInt64(resources corev1.ResourceList) map[corev1.ResourceName]int64 {
+	result := make(map[corev1.ResourceName]int64)
+	for resourceName, quantity := range resources {
+		result[resourceName] = quantity.Value()
+	}
+	return result
 }

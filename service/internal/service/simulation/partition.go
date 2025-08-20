@@ -117,7 +117,7 @@ func (p *Partition) Simulate(ctx context.Context, scorer api.NodeScorer, selecto
 		scores = append(scores, score)
 	}
 
-	winnerScoreIndex := selector(scores...)
+	winnerScoreIndex := selector(scores)
 	winnerNode, err := p.GetScaledNodeOfWinner()
 	if err != nil {
 		return err

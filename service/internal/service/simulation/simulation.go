@@ -5,6 +5,7 @@ import (
 	"context"
 	sacorev1alpha1 "github.com/gardener/scaling-advisor/api/core/v1alpha1"
 	"github.com/gardener/scaling-advisor/common/nodeutil"
+	"github.com/gardener/scaling-advisor/common/objutil"
 	mkapi "github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/core/typeinfo"
 	"github.com/gardener/scaling-advisor/service/api"
@@ -36,7 +37,7 @@ type result struct {
 	Phase           Phase
 	Err             error
 	SimulationNode  *corev1.Node
-	UnscheduledPods []*api.PodResourceInfo
+	UnscheduledPods []api.PodResourceInfo
 	ScheduledPods   map[string][]*api.PodResourceInfo
 }
 
@@ -108,7 +109,7 @@ func (s *Simulation) GetScaledNodeAssignment() *api.NodePodAssignment {
 	}
 }
 
-func (s *Simulation) GetUnscheduledPods() []*api.PodResourceInfo {
+func (s *Simulation) GetUnscheduledPods() []api.PodResourceInfo {
 	if s.result == nil {
 		return nil
 	}
@@ -197,7 +198,7 @@ func GetNodeResourceInfo(node *corev1.Node) *api.NodeResourceInfo {
 	return &api.NodeResourceInfo{
 		Name:         node.Name,
 		InstanceType: instanceType,
-		Capacity:     node.Status.Capacity,
-		Allocatable:  node.Status.Allocatable,
+		Capacity:     objutil.ResourceListToMapInt64(node.Status.Capacity),
+		Allocatable:  objutil.ResourceListToMapInt64(node.Status.Allocatable),
 	}
 }

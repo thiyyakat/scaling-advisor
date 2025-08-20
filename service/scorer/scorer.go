@@ -7,10 +7,9 @@ import (
 	v1 "k8s.io/api/core/v1"
 )
 
-var _ api.NodeScoreSelector = GetNodeScoreSelector
+var _ api.GetNodeScoreSelector = GetNodeScoreSelector
 
-func GetNodeScoreSelector(nodeScores ...api.NodeScore) int {
-	//TODO implement me
+func GetNodeScoreSelector(scoringStrategy commontypes.NodeScoringStrategy) (api.NodeScoreSelector, error) {
 	panic("implement me")
 }
 
