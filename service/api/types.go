@@ -153,7 +153,7 @@ func (c *ClusterSnapshot) GetUnscheduledPods() []PodInfo {
 type PodInfo struct {
 	ResourceMeta
 	// AggregatedRequests is an aggregated resource requests for all containers of the Pod.
-	AggregatedRequests corev1.ResourceList
+	AggregatedRequests map[corev1.ResourceName]int64
 	// Volumes are the volumes that are attached to the Pod.
 	Volumes []corev1.Volume `json:"volumes"`
 	// NodeSelector is the node selector for the Pod.
@@ -171,7 +171,7 @@ type PodInfo struct {
 	Priority                  *int32
 	PreemptionPolicy          *corev1.PreemptionPolicy
 	RuntimeClassName          *string
-	Overhead                  corev1.ResourceList
+	Overhead                  map[corev1.ResourceName]int64
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint
 	ResourceClaims            []corev1.PodResourceClaim
 }
@@ -194,9 +194,9 @@ type NodeInfo struct {
 	// Taints are the node's taints.
 	Taints []corev1.Taint
 	// Capacity is the total resource capacity of the node.
-	Capacity corev1.ResourceList
+	Capacity map[corev1.ResourceName]int64
 	// Allocatable is the allocatable resource capacity of the node.
-	Allocatable corev1.ResourceList
+	Allocatable map[corev1.ResourceName]int64
 	// CSIDriverVolumeMaximums is a map of CSI driver names to the maximum number of unique volumes managed by the
 	// CSI driver that can be used on a node.
 	CSIDriverVolumeMaximums map[string]int32
@@ -247,7 +247,7 @@ type PodResourceInfo struct {
 	UID types.UID
 	types.NamespacedName
 	// AggregatedRequests is an aggregated resource requests for all containers of the Pod.
-	AggregatedRequests corev1.ResourceList
+	AggregatedRequests map[corev1.ResourceName]int64
 }
 
 // NodeResourceInfo represents the subset of NodeInfo such that NodeScorer can compute an effective NodeScore.
@@ -256,9 +256,9 @@ type NodeResourceInfo struct {
 	Name         string
 	InstanceType string
 	// Capacity is the total resource capacity of the node.
-	Capacity corev1.ResourceList
+	Capacity map[corev1.ResourceName]int64
 	// Allocatable is the allocatable resource capacity of the node.
-	Allocatable corev1.ResourceList
+	Allocatable map[corev1.ResourceName]int64
 }
 
 type NodePlacementInfo struct {
