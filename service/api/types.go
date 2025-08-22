@@ -296,6 +296,8 @@ type NodePlacementInfo struct {
 	NodeTemplateName string
 	// InstanceType is the instance type of the Node.
 	InstanceType string
+	// Region is the region of the instance
+	Region string
 	// AvailabilityZone is the availability zone of the node pool.
 	AvailabilityZone string
 }
