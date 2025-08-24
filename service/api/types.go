@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"fmt"
 	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	corev1alpha1 "github.com/gardener/scaling-advisor/api/core/v1alpha1"
 	mkapi "github.com/gardener/scaling-advisor/minkapi/api"
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
@@ -41,6 +43,16 @@ type ScalingAdviceGenerationStrategy string
 const (
 	IncrementalScalingAdviceGenerationStrategy ScalingAdviceGenerationStrategy = "Incremental"
 	AllInOneScalingAdviceGenerationStrategy    ScalingAdviceGenerationStrategy = "AllInOne"
+)
+
+// ActivityStatus represents the operational status of an activity
+type ActivityStatus string
+
+const (
+	ActivityStatusPending ActivityStatus = "Pending"
+	ActivityStatusRunning ActivityStatus = "Running"
+	ActivityStatusSuccess ActivityStatus = metav1.StatusSuccess
+	ActivityStatusFailure ActivityStatus = metav1.StatusFailure
 )
 
 // ScalingAdviceRequest encapsulates the request parameters for generating scaling advice.
@@ -87,8 +99,9 @@ type ScalingAdvisorServiceConfig struct {
 // The callback maybe invoked zero or more times during the generation of scaling advice with callbackType representing the type of change in the scaling advice.
 type ScalingAdviceResponseFn func(response ScalingAdviceResponse) error
 
-// ScalingAdvisorService defines the interface for the scaling advisor service.
+// ScalingAdvisorService defines the facade for the scaling advisor service.
 type ScalingAdvisorService interface {
+	commontypes.Service
 	// GenerateScalingAdvice generates scaling advice based on the provided request and invokes the responseFn callback with the generated advice.
 	GenerateScalingAdvice(ctx context.Context, request ScalingAdviceRequest, responseFn ScalingAdviceResponseFn) error
 }
@@ -108,7 +121,7 @@ type SchedulerLaunchParams struct {
 }
 
 // SchedulerLauncher defines the interface for launching a kube-scheduler instance.
-// There will be limited number of kube-scheduler instances that can be launched at a time.
+// There will be a limited number of kube-scheduler instances that can be launched at a time.
 type SchedulerLauncher interface {
 	// Launch launches and runs an embedded scheduler instance asynchronously.
 	// If the limit of running schedulers is reached, it will block.
@@ -221,17 +234,6 @@ type ResourceMeta struct {
 	DeletionTimestamp time.Time
 }
 
-// NodeScore to be documented later.
-type NodeScore struct {
-	// SimulationName is the unique name of the simulation that produces this NodeScore.
-	SimulationName string
-	// Placement represents the placement information for the Node.
-	Placement       NodePlacementInfo
-	UnscheduledPods []PodResourceInfo
-	// Value is the score value for this Node.
-	Value int
-}
-
 type InstancePricing interface {
 	GetPrice(region, instanceType string) (float64, error)
 }
@@ -239,6 +241,30 @@ type GetInstancePricing func(provider commontypes.CloudProvider, pricingDataPath
 
 type NodeScorer interface {
 	Compute(args NodeScoreArgs) (NodeScore, error)
+}
+type NodeScoreArgs struct {
+	// Name that must given to the NodeScore produced by the NodeScorer
+	Name string
+	// Placement represents the placement information for the Node.
+	Placement NodePlacementInfo
+	// ScaledAssignment represents the assignment of the scaled Node for the current run.
+	ScaledAssignment *NodePodAssignment
+	// Assignments represent the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
+	// or it is a winning simulated Node from a previous run.
+	Assignments []NodePodAssignment
+	// UnscheduledPods is the slice of unscheduled pods that remain unscheduled after simulation is completed.
+	UnscheduledPods []PodResourceInfo
+}
+
+// NodeScore to be documented later.
+type NodeScore struct {
+	// Name is the name for this node score
+	Name string
+	// Placement represents the placement information for the Node.
+	Placement       NodePlacementInfo
+	UnscheduledPods []PodResourceInfo
+	// Value is the score value for this Node.
+	Value int
 }
 
 type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing, weights map[corev1.ResourceName]float64) (NodeScorer, error)
@@ -273,24 +299,116 @@ type NodePlacementInfo struct {
 	AvailabilityZone string
 }
 
-type NodeScoreArgs struct {
-	// SimulationName is the unique simulation name.
-	SimulationName string
-	// Placement represents the placement information for the Node.
-	Placement NodePlacementInfo
-	// ScaledAssignment represents the assignment of the scaled Node for the current run.
-	ScaledAssignment *NodePodAssignment
-	// Assignments represents the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
-	// or it is a winning simulated Node from a previous run.
-	Assignments     []*NodePodAssignment
-	UnscheduledPods []PodResourceInfo
-}
-
 type NodePodAssignment struct {
-	Node          *NodeResourceInfo
-	ScheduledPods []*PodResourceInfo
+	Node          NodeResourceInfo
+	ScheduledPods []PodResourceInfo
 }
 
 // NodeScoreSelector selects the winning NodeScore amongst the NodeScores of a given simulation pass and returns its index.
-// If there is no winning node score then it returns -1.
-type NodeScoreSelector func(nodeScores []NodeScore) int
+// If there is no winning node score amongst the group, then it returns -1.
+type NodeScoreSelector func(groupNodeScores []NodeScore) (winningIndex int, err error)
+
+// Simulation represents an activity that performs valid unscheduled pod to ready node assignments on a minkapi View.
+// A simulation implementation may use a k8s scheduler - either embedded or external to do this, or it may form a SAT/MIP model
+// from the pod/node data and run a tool that solves the model.
+type Simulation interface {
+	// Name returns the logical simulation name
+	Name() string
+	// ActivityStatus returns the current ActivityStatus of the simulation
+	ActivityStatus() ActivityStatus
+	// NodePool returns the target node pool against which the simulation should be run
+	NodePool() *corev1alpha1.NodePool
+	// NodeTemplate returns the target node template against which the simulation should be run
+	NodeTemplate() *corev1alpha1.NodeTemplate
+	// Run executes the simulation to completion and returns any encountered error. This is a blocking call and callers are
+	// expected to manage concurrency and SimRunResult consumption.
+	Run(ctx context.Context) error
+	// Result returns the latest SimRunResult if the simulation is in ActivityStatusSuccess,
+	// or nil if the simulation is in ActivityStatusPending or ActivityStatusRunning
+	// or an error if the ActivityStatus is ActivityStatusFailure
+	Result() (SimRunResult, error)
+}
+
+type SimRunResult struct {
+	// Name of the Simulation that produced this result.
+	Name string
+	// ScaledNode is the simulated scaled node.
+	ScaledNode *corev1.Node
+	NodeScoreArgs
+}
+
+// SimulationArgs represents the argument necessary for creating a simulation instance.
+type SimulationArgs struct {
+	AvailabilityZone  string
+	NodeTemplateName  string
+	NodePool          *corev1alpha1.NodePool
+	SchedulerLauncher SchedulerLauncher
+	View              mkapi.View
+}
+
+// CreateSimulationFunc is a factory function for constructing a simulation instance
+type CreateSimulationFunc func(name string, args *SimulationArgs) (Simulation, error)
+
+// SimulationGroup is a group of simulations at the same priority level (ie a partition of simulations). We attempt to run simulations for the
+// given group and get a preferred NodeScore for simulations belonging to a group before moving to the group at the
+// next priority.
+//
+//	Example:1
+//		np-a: 1 {nt-a: 1, nt-b: 2, nt-c: 1}
+//		np-b: 2 {nt-q: 2, nt-r: 1, nt-s: 1}
+//
+//		p1: {PoolPriority: 1, NTPriority: 1, nt-a, nt-c}
+//		p2: {PoolPriority: 1, NTPriority: 2, nt-b}
+//		p3: {PoolPriority: 2, NTPriority: 1, nt-r, nt-s}
+//		p4: {PoolPriority: 2, NTPriority: 2, nt-q}
+//
+//	Example:2
+//		np-a: 1 {nt-a: 1, nt-b: 2, nt-c: 1}
+//		np-b: 2 {nt-q: 2, nt-r: 1, nt-s: 1}
+//		np-c: 1 {nt-x: 2, nt-y: 1}
+//
+//		p1: {PoolPriority: 1, NTPriority: 1, nt-a, nt-c, nt-y}
+//		p2: {PoolPriority: 1, NTPriority: 2, nt-b, nt-x}
+//		p3: {PoolPriority: 2, NTPriority: 1, nt-r, nt-s}
+//		p4: {PoolPriority: 2, NTPriority: 2, nt-q}
+type SimulationGroup interface {
+	Name() string
+	GetKey() SimGroupKey
+	GetSimulations() []Simulation
+	Run(ctx context.Context) (SimGroupRunResult, error)
+}
+
+// CreateSimulationGroupsFunc represents a factory function for partitioning Simulation instances into one or more SimulationGroups
+type CreateSimulationGroupsFunc func(simulations []Simulation) ([]SimulationGroup, error)
+
+// SimGroupKey represents the key for a SimulationGroup.
+type SimGroupKey struct {
+	NodePoolPriority     int32
+	NodeTemplatePriority int32
+}
+
+func (k SimGroupKey) String() string {
+	return fmt.Sprintf("(%d:%d)", k.NodePoolPriority, k.NodeTemplatePriority)
+}
+
+type SimGroupRunResult struct {
+	// Name of the group that produced this result.
+	Name string
+	// Key is the simulation group key (partition key)
+	Key               SimGroupKey
+	SimulationResults []SimRunResult
+}
+
+// SimGroupScores represents the scoring results for the simulation group after running the NodeScorer against the SimGroupRunResult.
+type SimGroupScores struct {
+	AllNodeScores    []NodeScore
+	WinnerScoreIndex int
+	WinnerNode       *corev1.Node
+}
+
+func (s *SimGroupScores) GetWinner() *NodeScore {
+	if s.WinnerScoreIndex < 0 {
+		return nil
+	}
+	return &s.AllNodeScores[s.WinnerScoreIndex]
+}

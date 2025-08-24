@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	commonconstants "github.com/gardener/scaling-advisor/api/common/constants"
 	"os"
 	"strings"
 
@@ -45,6 +46,9 @@ func setupFlagsToOpts() (*pflag.FlagSet, *MainOpts) {
 	mainOpts.KubeConfigPath = os.Getenv(clientcmd.RecommendedConfigPathEnvVar)
 	if mainOpts.KubeConfigPath == "" {
 		mainOpts.KubeConfigPath = api.DefaultKubeConfigPath
+	}
+	if mainOpts.Port == 0 {
+		mainOpts.Port = commonconstants.DefaultMinKAPIPort
 	}
 	commoncli.MapServerConfigFlags(flagSet, &mainOpts.ServerConfig)
 	flagSet.IntVarP(&mainOpts.WatchQueueSize, "watch-queue-size", "s", api.DefaultWatchQueueSize, "max number of events to queue per watcher")

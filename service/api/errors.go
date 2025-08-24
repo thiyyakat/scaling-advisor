@@ -10,6 +10,16 @@ var (
 	ErrInitFailed = fmt.Errorf("failed to initialize %s service", ServiceName)
 	// ErrGenScalingAdvice is a sentinel error indicating that the service failed to generate scaling advice.
 	ErrGenScalingAdvice = errors.New("failed to generate scaling advice")
+	// ErrCreateSimulation is a sentinel error indicating that the service failed to create a scaling simulation
+	ErrCreateSimulation = errors.New("failed to create simulation")
+	// ErrRunSimulation is a sentinel error indicating that a specific scaling simulation failed
+	ErrRunSimulation = errors.New("failed to run simulation")
+	// ErrRunSimulationGroup is a sentinel error indicating that a scaling simulation group failed
+	ErrRunSimulationGroup = errors.New("failed to run simulation group")
+	//ErrComputeNodeScore is a sentinel error indicating that the NodeScorer failed to compute a score
+	ErrComputeNodeScore = errors.New("failed to compute node score")
+	//ErrSelectNodeScore is a sentinel error indicating that the NodeScoreSelector failed to select a score
+	ErrSelectNodeScore = errors.New("failed to select node score")
 	// ErrLoadSchedulerConfig is a sentinel error indicating that the service failed to load the scheduler configuration.
 	ErrLoadSchedulerConfig = errors.New("failed to load scheduler configuration")
 	// ErrLaunchScheduler is a sentinel error indicating that the service failed to launch the scheduler.
@@ -20,3 +30,13 @@ var (
 	ErrUnsupportedNodeScoringStrategy = errors.New("unsupported node scoring strategy")
 	ErrUnsupportedCloudProvider       = errors.New("unsupported cloud provider")
 )
+
+func AsGenerateError(id string, correlationID string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(ErrGenScalingAdvice, err) {
+		return err
+	}
+	return fmt.Errorf("%w: could not process request with ID %q, CorrelationID %q: %w", ErrGenScalingAdvice, id, correlationID, err)
+}

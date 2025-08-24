@@ -5,8 +5,18 @@
 package types
 
 import (
+	"context"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// Service is a component that can be started and stopped.
+type Service interface {
+	// Start starts the service with the given context. Start may block depending on the implementation - if the service is a server.
+	Start(ctx context.Context) error
+
+	// Stop stops the service. Stop does not block.
+	Stop(ctx context.Context) error
+}
 
 // ServerConfig is the configuration for services that are servers.
 type ServerConfig struct {

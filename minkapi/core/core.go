@@ -42,7 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-var _ api.Server = (*InMemoryKAPI)(nil)
+var _ api.KAPIServer = (*InMemoryKAPI)(nil)
 
 // InMemoryKAPI holds the in-memory stores, watch channels, and version tracking for simple implementation of api.APIServer
 type InMemoryKAPI struct {
@@ -55,16 +55,11 @@ type InMemoryKAPI struct {
 	log          logr.Logger
 }
 
-func NewInMemoryMinKAPI(ctx context.Context, cfg api.MinKAPIConfig) (api.Server, error) {
-	log := logr.FromContextOrDiscard(ctx)
+func NewInMemoryKAPI(log logr.Logger, cfg api.MinKAPIConfig) (api.KAPIServer, error) {
 	setMinKAPIConfigDefaults(&cfg)
 	mux := http.NewServeMux()
-	stores := map[schema.GroupVersionKind]*store.InMemResourceStore{}
-	for _, d := range typeinfo.SupportedDescriptors {
-		stores[d.GVK] = store.NewInMemResourceStore(d.GVK, d.ListGVK, d.GVR.GroupResource().Resource, cfg.WatchQueueSize, cfg.WatchTimeout, typeinfo.SupportedScheme, log)
-	}
 	scheme := typeinfo.SupportedScheme
-	baseView, err := view.New(log, cfg.KubeConfigPath, scheme, cfg.WatchTimeout)
+	baseView, err := view.New(log, cfg.KubeConfigPath, scheme, cfg.WatchQueueSize, cfg.WatchTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -75,9 +70,6 @@ func NewInMemoryMinKAPI(ctx context.Context, cfg api.MinKAPIConfig) (api.Server,
 		server: &http.Server{
 			Addr:    net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 			Handler: mux,
-			BaseContext: func(_ net.Listener) context.Context {
-				return ctx
-			},
 		},
 		baseView: baseView,
 		log:      log,
@@ -102,7 +94,11 @@ func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
 }
 
 // Start begins the HTTP server
-func (k *InMemoryKAPI) Start() error {
+func (k *InMemoryKAPI) Start(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	k.server.BaseContext = func(_ net.Listener) context.Context {
+		return ctx
+	}
 	// We do this because we want the bind address
 	listener, err := net.Listen("tcp", k.server.Addr)
 	if err != nil {
@@ -116,7 +112,7 @@ func (k *InMemoryKAPI) Start() error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
 	}
-	k.log.Info("kubeconfig generated", "path", k.cfg.KubeConfigPath)
+	log.Info("kubeconfig generated", "path", k.cfg.KubeConfigPath)
 
 	schedulerTmplParams := configtmpl.KubeSchedulerTmplParams{
 		KubeConfigPath:          k.cfg.KubeConfigPath,
@@ -128,7 +124,7 @@ func (k *InMemoryKAPI) Start() error {
 	if err != nil {
 		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
 	}
-	k.log.Info("sample kube-scheduler-config generated", "path", schedulerTmplParams.KubeSchedulerConfigPath)
+	log.Info("sample kube-scheduler-config generated", "path", schedulerTmplParams.KubeSchedulerConfigPath)
 	k.log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr)
 	if err := k.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("%w: %w", api.ErrServiceFailed, err)
@@ -136,8 +132,8 @@ func (k *InMemoryKAPI) Start() error {
 	return nil
 }
 
-// Shutdown shuts down the HTTP server and closes resources
-func (k *InMemoryKAPI) Shutdown(ctx context.Context) (err error) {
+// Stop  shuts down the HTTP server and closes resources
+func (k *InMemoryKAPI) Stop(ctx context.Context) (err error) {
 	err = k.server.Shutdown(ctx) // shutdown server first to avoid accepting new requests.
 	k.baseView.Close()
 	return
@@ -149,7 +145,7 @@ func (k *InMemoryKAPI) GetBaseView() api.View {
 
 func (k *InMemoryKAPI) GetSimulationView() (api.View, error) {
 	// TODO replace with SchedulerView
-	return view.New(k.log, k.cfg.KubeConfigPath, k.scheme, k.cfg.WatchTimeout)
+	return view.New(k.log, k.cfg.KubeConfigPath, k.scheme, k.cfg.WatchQueueSize, k.cfg.WatchTimeout)
 }
 
 func (k *InMemoryKAPI) GetMux() *http.ServeMux {

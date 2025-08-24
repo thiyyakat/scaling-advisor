@@ -1,8 +1,8 @@
 package simulation
 
 import (
-	"cmp"
 	"context"
+	"fmt"
 	sacorev1alpha1 "github.com/gardener/scaling-advisor/api/core/v1alpha1"
 	"github.com/gardener/scaling-advisor/common/nodeutil"
 	"github.com/gardener/scaling-advisor/common/objutil"
@@ -10,48 +10,32 @@ import (
 	"github.com/gardener/scaling-advisor/minkapi/core/typeinfo"
 	"github.com/gardener/scaling-advisor/service/api"
 	"github.com/go-logr/logr"
-	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"maps"
 	"slices"
 )
 
-type Simulation struct {
-	Args            *Args
-	schedulerHandle api.SchedulerHandle
+type defaultSimulation struct {
+	name            string
+	args            *api.SimulationArgs
 	nodeTemplate    *sacorev1alpha1.NodeTemplate
+	schedulerHandle api.SchedulerHandle
+	state           *trackState
+}
+
+// traceState is regularly populated when simulation is running.
+type trackState struct {
+	status          api.ActivityStatus
 	simNode         *corev1.Node
-	partitionKey    PartitionKey
-	result          *result
+	unscheduledPods []api.PodResourceInfo
+	scheduledPods   map[string][]api.PodResourceInfo
+	result          api.SimRunResult
+	err             error
 }
 
-type Phase string
+var _ api.CreateSimulationFunc = New
 
-const (
-	PhaseInProgress Phase = "InProgress"
-	PhaseSuccessful       = "Successful"
-	PhaseFailed           = "Failed"
-)
-
-type result struct {
-	Phase           Phase
-	Err             error
-	SimulationNode  *corev1.Node
-	UnscheduledPods []api.PodResourceInfo
-	ScheduledPods   map[string][]*api.PodResourceInfo
-}
-
-type Args struct {
-	// TODO this should be directly under Simulation and not in Args
-	Name              string
-	AvailabilityZone  string
-	NodeTemplateName  string
-	NodePool          sacorev1alpha1.NodePool
-	SchedulerLauncher api.SchedulerLauncher
-	View              mkapi.View
-}
-
-func New(args *Args) *Simulation {
+func New(name string, args *api.SimulationArgs) (api.Simulation, error) {
 	var nodeTemplate *sacorev1alpha1.NodeTemplate
 	for _, nt := range args.NodePool.NodeTemplates {
 		if nt.Name == args.NodeTemplateName {
@@ -59,88 +43,95 @@ func New(args *Args) *Simulation {
 			break
 		}
 	}
-	return &Simulation{
-		Args:         args,
-		nodeTemplate: nodeTemplate,
-		partitionKey: PartitionKey{
-			NodePoolPriority:     int(args.NodePool.Priority),
-			NodeTemplatePriority: int(nodeTemplate.Priority),
-		},
+	if nodeTemplate == nil {
+		return nil, fmt.Errorf("%w: node template %q not found in node pool %q", api.ErrCreateSimulation, args.NodeTemplateName, args.NodePool.Name)
 	}
+	return &defaultSimulation{
+		name:         name,
+		args:         args,
+		nodeTemplate: nodeTemplate,
+		state: &trackState{
+			status: api.ActivityStatusPending,
+		},
+	}, nil
 }
 
-func (s *Simulation) Start(ctx context.Context, eg *errgroup.Group) error {
-	s.simNode = s.buildSimulationNode()
-	if err := s.Args.View.CreateObject(typeinfo.NodesDescriptor.GVK, s.simNode); err != nil {
-		return err
-	}
-	simCtx := newSimulationContext(ctx, s.Args.Name)
-	schedulerHandle, err := s.launchSchedulerForSimulation(simCtx, s.Args.View)
+func (s *defaultSimulation) NodePool() *sacorev1alpha1.NodePool {
+	return s.args.NodePool
+}
+func (s *defaultSimulation) NodeTemplate() *sacorev1alpha1.NodeTemplate {
+	return s.nodeTemplate
+}
+
+func (s *defaultSimulation) Name() string {
+	return s.name
+}
+func (s *defaultSimulation) ActivityStatus() api.ActivityStatus {
+	return s.state.status
+}
+
+func (s *defaultSimulation) Result() (api.SimRunResult, error) {
+	return s.state.result, s.state.err
+}
+
+func (s *defaultSimulation) Run(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: run of simulation %q failed: %w", api.ErrRunSimulation, s.name, err)
+			s.state.err = err
+		}
+	}()
+	s.state.simNode = s.buildSimulationNode()
+	err = s.args.View.CreateObject(typeinfo.NodesDescriptor.GVK, s.state.simNode)
 	if err != nil {
-		return err
+		return
+	}
+	simCtx := newSimulationContext(ctx, s.name)
+	schedulerHandle, err := s.launchSchedulerForSimulation(simCtx, s.args.View)
+	if err != nil {
+		return
 	}
 	s.schedulerHandle = schedulerHandle
-	eg.Go(func() error {
-		return s.track(ctx)
-	})
-	return nil
+	s.state.status = api.ActivityStatusRunning
+	err = s.trackUntilStabilized(simCtx)
+	if err != nil {
+		return
+	}
+	assignments, err := s.getAssignments()
+	if err != nil {
+		return
+	}
+	s.state.result = api.SimRunResult{
+		Name:       s.name,
+		ScaledNode: s.state.simNode,
+		NodeScoreArgs: api.NodeScoreArgs{
+			Name:             s.name,
+			Placement:        s.getScaledNodePlacementInfo(),
+			ScaledAssignment: s.getScaledNodeAssignment(),
+			UnscheduledPods:  s.state.unscheduledPods,
+			Assignments:      assignments,
+		},
+	}
+	return
 }
 
-func (s *Simulation) GetPartitionKey() PartitionKey {
-	return s.partitionKey
-}
-
-func (s *Simulation) GetScaledNodePlacementInfo() api.NodePlacementInfo {
+func (s *defaultSimulation) getScaledNodePlacementInfo() api.NodePlacementInfo {
 	return api.NodePlacementInfo{
-		NodePoolName:     s.Args.NodePool.Name,
+		NodePoolName:     s.args.NodePool.Name,
 		NodeTemplateName: s.nodeTemplate.Name,
 		InstanceType:     s.nodeTemplate.InstanceType,
-		AvailabilityZone: s.Args.AvailabilityZone,
+		AvailabilityZone: s.args.AvailabilityZone,
 	}
 }
 
-func (s *Simulation) GetScaledNodeAssignment() *api.NodePodAssignment {
-	if s.result == nil {
-		return nil
-	}
+func (s *defaultSimulation) getScaledNodeAssignment() *api.NodePodAssignment {
 	return &api.NodePodAssignment{
-		Node:          GetNodeResourceInfo(s.result.SimulationNode),
-		ScheduledPods: s.result.ScheduledPods[s.result.SimulationNode.Name],
+		Node:          getNodeResourceInfo(s.state.simNode),
+		ScheduledPods: s.state.scheduledPods[s.state.simNode.Name],
 	}
 }
 
-func (s *Simulation) GetUnscheduledPods() []api.PodResourceInfo {
-	if s.result == nil {
-		return nil
-	}
-	return s.result.UnscheduledPods
-}
-
-func (s *Simulation) GetNodeAssignments() ([]*api.NodePodAssignment, error) {
-	if s.result == nil {
-		return nil, nil
-	}
-	nodeNames := slices.Collect(maps.Keys(s.result.ScheduledPods))
-	nodeNames = slices.DeleteFunc(nodeNames, func(nodeName string) bool {
-		return nodeName == s.result.SimulationNode.Name
-	})
-	nodes, err := s.Args.View.ListNodes(nodeNames...)
-	if err != nil {
-		return nil, err
-	}
-	var assignments []*api.NodePodAssignment
-	for _, node := range nodes {
-		nodeResources := GetNodeResourceInfo(node)
-		podResources := s.result.ScheduledPods[node.Name]
-		assignments = append(assignments, &api.NodePodAssignment{
-			Node:          nodeResources,
-			ScheduledPods: podResources,
-		})
-	}
-	return assignments, nil
-}
-
-func (s *Simulation) launchSchedulerForSimulation(ctx context.Context, simView mkapi.View) (api.SchedulerHandle, error) {
+func (s *defaultSimulation) launchSchedulerForSimulation(ctx context.Context, simView mkapi.View) (api.SchedulerHandle, error) {
 	client, dynClient := simView.GetClients()
 	informerFactory, dynInformerFactory := simView.GetInformerFactories()
 	schedLaunchParams := &api.SchedulerLaunchParams{
@@ -150,10 +141,10 @@ func (s *Simulation) launchSchedulerForSimulation(ctx context.Context, simView m
 		DynInformerFactory: dynInformerFactory,
 		EventSink:          simView.GetEventSink(),
 	}
-	return s.Args.SchedulerLauncher.Launch(ctx, schedLaunchParams)
+	return s.args.SchedulerLauncher.Launch(ctx, schedLaunchParams)
 }
 
-func (s *Simulation) buildSimulationNode() *corev1.Node {
+func (s *defaultSimulation) buildSimulationNode() *corev1.Node {
 	/*
 		create a simulation node based on the provided template, region, zone, labels, and taints.
 		Add apiconstants.LabelSimulationID with the value of simulationName to the labels.
@@ -161,8 +152,8 @@ func (s *Simulation) buildSimulationNode() *corev1.Node {
 	return &corev1.Node{}
 }
 
-// track monitors the EventSink for scheduling events for all the unscheduled pods for a simulation run.
-func (s *Simulation) track(ctx context.Context) error {
+// trackUntilStabilized monitors the EventSink for scheduling events for all the unscheduled pods for a simulation run.
+func (s *defaultSimulation) trackUntilStabilized(ctx context.Context) error {
 	/*
 			NOTE: If there is an error then you return the error.
 			If the ctx.Done then return the ctx.Err
@@ -172,10 +163,30 @@ func (s *Simulation) track(ctx context.Context) error {
 		      2. Stabilization period is over and there are still unscheduled pods.
 
 			At the end of the loop it does the following:
-			1. Updates the Simulation with unscheduled and scheduled pods.
-			2. Signals the wait group by calling wg.Done to indicate that the simulation run is complete.
+			1. Updates the defaultSimulation.state with unscheduled and scheduled pods.
 	*/
-	return nil
+	panic("implement me") //TODO immplement trackUntilStabilized
+}
+
+func (s *defaultSimulation) getAssignments() ([]api.NodePodAssignment, error) {
+	nodeNames := slices.Collect(maps.Keys(s.state.scheduledPods))
+	nodeNames = slices.DeleteFunc(nodeNames, func(nodeName string) bool {
+		return nodeName == s.state.simNode.Name
+	})
+	nodes, err := s.args.View.ListNodes(nodeNames...)
+	if err != nil {
+		return nil, err
+	}
+	var assignments []api.NodePodAssignment
+	for _, node := range nodes {
+		nodeResources := getNodeResourceInfo(node)
+		podResources := s.state.scheduledPods[node.Name]
+		assignments = append(assignments, api.NodePodAssignment{
+			Node:          nodeResources,
+			ScheduledPods: podResources,
+		})
+	}
+	return assignments, nil
 }
 
 func newSimulationContext(ctx context.Context, simulationName string) context.Context {
@@ -183,19 +194,9 @@ func newSimulationContext(ctx context.Context, simulationName string) context.Co
 	return logr.NewContext(ctx, log.WithValues("simulationName", simulationName))
 }
 
-func SortPartitions(partitions []Partition) {
-	slices.SortFunc(partitions, func(a, b Partition) int {
-		npPriorityCmp := cmp.Compare(a.Key.NodePoolPriority, b.Key.NodePoolPriority)
-		if npPriorityCmp != 0 {
-			return npPriorityCmp
-		}
-		return cmp.Compare(a.Key.NodeTemplatePriority, b.Key.NodeTemplatePriority)
-	})
-}
-
-func GetNodeResourceInfo(node *corev1.Node) *api.NodeResourceInfo {
+func getNodeResourceInfo(node *corev1.Node) api.NodeResourceInfo {
 	instanceType := nodeutil.GetInstanceType(node)
-	return &api.NodeResourceInfo{
+	return api.NodeResourceInfo{
 		Name:         node.Name,
 		InstanceType: instanceType,
 		Capacity:     objutil.ResourceListToMapInt64(node.Status.Capacity),

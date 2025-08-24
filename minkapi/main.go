@@ -39,20 +39,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	service, err := core.NewInMemoryMinKAPI(logr.NewContext(ctx, log), mainOpts.MinKAPIConfig)
+	service, err := core.NewInMemoryKAPI(log, mainOpts.MinKAPIConfig)
 	if err != nil {
 		log.Error(err, "failed to initialize InMemoryKAPI")
 		return
 	}
-	// Start the service in a goroutine
+	// Begin the service in a goroutine
 	go func() {
-		if err := service.Start(); err != nil {
+		if err := service.Start(logr.NewContext(ctx, log)); err != nil {
 			if errors.Is(err, api.ErrStartFailed) {
 				log.Error(err, "failed to start service")
 			} else {
 				log.Error(err, fmt.Sprintf("%s start failed", api.ProgramName))
 			}
-			os.Exit(commoncli.ExitErrStart)
 		}
 	}()
 
@@ -65,7 +64,7 @@ func main() {
 	defer cancel()
 
 	// Perform shutdown
-	if err := service.Shutdown(shutDownCtx); err != nil {
+	if err := service.Stop(shutDownCtx); err != nil {
 		log.Error(err, fmt.Sprintf(" %s shutdown failed", api.ProgramName))
 		os.Exit(commoncli.ExitErrShutdown)
 	}

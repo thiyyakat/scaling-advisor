@@ -12,7 +12,8 @@ import (
 var (
 	ErrInitFailed = errors.New(fmt.Sprintf("%s init failed", ProgramName))
 	// ErrStartFailed is a sentinel error indicating that the service failed to start.
-	ErrStartFailed = fmt.Errorf("%s start failed", ProgramName)
+	ErrStartFailed         = fmt.Errorf("%s start failed", ProgramName)
+	ErrClientFacadesFailed = errors.New("failed to create client facades")
 	// ErrServiceFailed is a sentinel error indicating that the service failed.
 	ErrServiceFailed = fmt.Errorf("%s service failed", ProgramName)
 	// ErrMissingOpt is a sentinel error indicating that one or more required command line options are missing.

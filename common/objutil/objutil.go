@@ -40,7 +40,7 @@ func LoadYAMLIntoRuntimeObject(yamlPath string, s *runtime.Scheme, obj runtime.O
 }
 
 func ResourceListToMapInt64(resources corev1.ResourceList) map[corev1.ResourceName]int64 {
-	result := make(map[corev1.ResourceName]int64)
+	result := make(map[corev1.ResourceName]int64, len(resources))
 	for resourceName, quantity := range resources {
 		result[resourceName] = quantity.Value()
 	}

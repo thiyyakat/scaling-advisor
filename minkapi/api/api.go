@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	"time"
 
-	apicommon "github.com/gardener/scaling-advisor/api/common/types"
+	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
@@ -35,7 +35,7 @@ const (
 
 // MinKAPIConfig holds the configuration for MinKAPI.
 type MinKAPIConfig struct {
-	apicommon.ServerConfig
+	commontypes.ServerConfig
 	// WatchTimeout represents the timeout for watches following which MinKAPI service will close the connection and ends the watch.
 	WatchTimeout time.Duration
 	// WatchQueueSize is the maximum number of events to queue per watcher
@@ -65,9 +65,15 @@ type EventSink interface {
 	Reset()
 }
 
+type ClientFacades struct {
+	Client             kubernetes.Interface
+	DynClient          dynamic.Interface
+	InformerFactory    informers.SharedInformerFactory
+	DynInformerFactory dynamicinformer.DynamicSharedInformerFactory
+}
+
 type View interface {
-	GetClients() (kubernetes.Interface, dynamic.Interface)
-	GetInformerFactories() (informers.SharedInformerFactory, dynamicinformer.DynamicSharedInformerFactory)
+	GetClientFacades() (*ClientFacades, error)
 	GetResourceStore(gvk schema.GroupVersionKind) (ResourceStore, error)
 	GetEventSink() EventSink
 	CreateObject(gvk schema.GroupVersionKind, obj metav1.Object) error
@@ -79,9 +85,8 @@ type View interface {
 	Close()
 }
 
-type Server interface {
-	Start() error
-	Shutdown(ctx context.Context) error
+type KAPIServer interface {
+	commontypes.Service
 	GetBaseView() View
 	GetSimulationView() (View, error)
 }

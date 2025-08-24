@@ -41,7 +41,7 @@ var (
 func MapServerConfigFlags(flagSet *pflag.FlagSet, opts *commontypes.ServerConfig) {
 	flagSet.StringVarP(&opts.KubeConfigPath, clientcmd.RecommendedConfigPathFlag, "k", opts.KubeConfigPath, "path to master kubeconfig - fallback to KUBECONFIG env-var")
 	flagSet.StringVarP(&opts.Host, "host", "H", "", "host name to bind this service. Use 0.0.0.0 for all interfaces")
-	flagSet.IntVarP(&opts.Port, "port", "P", 0, "listen port for REST API")
+	flagSet.IntVarP(&opts.Port, "port", "P", opts.Port, "listen port for REST API")
 	flagSet.BoolVarP(&opts.ProfilingEnabled, "pprof", "p", false, "enable pprof profiling")
 
 	klogFlagSet := flag.NewFlagSet("klog", flag.ContinueOnError)

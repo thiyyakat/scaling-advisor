@@ -29,35 +29,28 @@ import (
 var _ api.View = (*baseObjectView)(nil)
 
 type baseObjectView struct {
-	log                logr.Logger
-	mu                 sync.RWMutex
-	kubeConfigPath     string
-	scheme             *runtime.Scheme
-	stores             map[schema.GroupVersionKind]*store.InMemResourceStore
-	client             kubernetes.Interface
-	dynClient          dynamic.Interface
-	informerFactory    informers.SharedInformerFactory
-	dynInformerFactory dynamicinformer.DynamicSharedInformerFactory
-	eventSink          api.EventSink
+	log               logr.Logger
+	mu                sync.RWMutex
+	kubeConfigPath    string
+	scheme            *runtime.Scheme
+	stores            map[schema.GroupVersionKind]*store.InMemResourceStore
+	eventSink         api.EventSink
+	watchQueueTimeout time.Duration
 }
 
-func New(log logr.Logger, kubeConfigPath string, scheme *runtime.Scheme, resyncPeriod time.Duration) (api.View, error) {
-	client, dynClient, err := buildClients(kubeConfigPath)
-	if err != nil {
-		return nil, err
+func New(log logr.Logger, kubeConfigPath string, scheme *runtime.Scheme, watchQueueSize int, watchQueueTimeout time.Duration) (api.View, error) {
+	stores := map[schema.GroupVersionKind]*store.InMemResourceStore{}
+	for _, d := range typeinfo.SupportedDescriptors {
+		stores[d.GVK] = store.NewInMemResourceStore(d.GVK, d.ListGVK, d.GVR.GroupResource().Resource, watchQueueSize, watchQueueTimeout, typeinfo.SupportedScheme, log)
 	}
-	informerFactory, dynInformerFactory := buildInformerFactories(client, dynClient, resyncPeriod)
 	eventSink := eventsink.New(log)
 	return &baseObjectView{
-		log:                log,
-		kubeConfigPath:     kubeConfigPath,
-		scheme:             scheme,
-		stores:             make(map[schema.GroupVersionKind]*store.InMemResourceStore),
-		client:             client,
-		dynClient:          dynClient,
-		informerFactory:    informerFactory,
-		dynInformerFactory: dynInformerFactory,
-		eventSink:          eventSink,
+		log:               log,
+		kubeConfigPath:    kubeConfigPath,
+		scheme:            scheme,
+		stores:            stores,
+		eventSink:         eventSink,
+		watchQueueTimeout: watchQueueTimeout,
 	}, nil
 }
 
@@ -79,12 +72,24 @@ func buildClients(kubeConfigPath string) (kubernetes.Interface, dynamic.Interfac
 	return client, dynClient, nil
 }
 
-func (b *baseObjectView) GetClients() (kubernetes.Interface, dynamic.Interface) {
-	return b.client, b.dynClient
-}
-
-func (b *baseObjectView) GetInformerFactories() (informers.SharedInformerFactory, dynamicinformer.DynamicSharedInformerFactory) {
-	return b.informerFactory, b.dynInformerFactory
+func (b *baseObjectView) GetClientFacades() (clientFacades *api.ClientFacades, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: %w", api.ErrClientFacadesFailed, err)
+		}
+	}()
+	client, dynClient, err := buildClients(b.kubeConfigPath) //TODO: Make in-mem clients here.
+	if err != nil {
+		return
+	}
+	informerFactory, dynInformerFactory := buildInformerFactories(client, dynClient, b.watchQueueTimeout)
+	clientFacades = &api.ClientFacades{
+		Client:             client,
+		DynClient:          dynClient,
+		InformerFactory:    informerFactory,
+		DynInformerFactory: dynInformerFactory,
+	}
+	return
 }
 
 func buildInformerFactories(client kubernetes.Interface, dyncClient dynamic.Interface, resyncPeriod time.Duration) (informerFactory informers.SharedInformerFactory, dynInformerFactory dynamicinformer.DynamicSharedInformerFactory) {

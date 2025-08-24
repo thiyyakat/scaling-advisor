@@ -126,7 +126,7 @@ func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn 
 		return
 	}
 	log.V(3).Info("scheduler handlers synced")
-	log.Info("Starting scheduler.Run with config", "config", s.schedulerConfig)
+	log.Info("Starting scheduler.Generate with config", "config", s.schedulerConfig)
 
 	handle = &schedulerHandle{
 		ctx:       ctx,
