@@ -2,40 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package core
+package server
 
 import (
 	"os"
 	"testing"
 
-	"github.com/gardener/scaling-advisor/minkapi/core/typeinfo"
+	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
-
-//func TestCreateList(t *testing.T) {
-//	log := klog.NewKlogr()
-//	descriptors := []typeinfo.Descriptor{
-//		typeinfo.PodsDescriptor,
-//	}
-//	objLists := [][]runtime.Object{
-//		{
-//			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pa"}},
-//			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pb"}},
-//		},
-//	}
-//	for i := 0; i < len(descriptors); i++ {
-//		d := descriptors[i]
-//		ol := objLists[i]
-//		listObj, err := createList(log, d, "", "v1", ol, labels.Everything())
-//		if err != nil {
-//			t.Errorf("Failed to create list: %v", err)
-//		}
-//		t.Logf("Created list object using %q: %v", d.ListGVK, listObj)
-//	}
-//}
 
 func TestPatchPodStatus(t *testing.T) {
 	data := readFile(t, "testdata/pod-a.json")

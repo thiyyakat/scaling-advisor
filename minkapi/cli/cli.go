@@ -9,10 +9,9 @@ import (
 	"flag"
 	"fmt"
 	commonconstants "github.com/gardener/scaling-advisor/api/common/constants"
+	"github.com/gardener/scaling-advisor/minkapi/api"
 	"os"
 	"strings"
-
-	"github.com/gardener/scaling-advisor/minkapi/api"
 
 	commoncli "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/spf13/pflag"
@@ -53,6 +52,7 @@ func setupFlagsToOpts() (*pflag.FlagSet, *MainOpts) {
 	commoncli.MapServerConfigFlags(flagSet, &mainOpts.ServerConfig)
 	flagSet.IntVarP(&mainOpts.WatchQueueSize, "watch-queue-size", "s", api.DefaultWatchQueueSize, "max number of events to queue per watcher")
 	flagSet.DurationVarP(&mainOpts.WatchTimeout, "watch-timeout", "t", api.DefaultWatchTimeout, "watch timeout after which connection is closed and watch removed")
+	flagSet.StringVarP(&mainOpts.BasePrefix, "base-prefix", "b", api.DefaultBasePrefix, "base path prefix for the base view of the minkapi service")
 
 	klogFlagSet := flag.NewFlagSet("klog", flag.ContinueOnError)
 	klog.InitFlags(klogFlagSet)

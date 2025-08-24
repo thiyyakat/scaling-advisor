@@ -16,7 +16,7 @@ import (
 
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/cli"
-	"github.com/gardener/scaling-advisor/minkapi/core"
+	"github.com/gardener/scaling-advisor/minkapi/server"
 
 	commoncli "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/spf13/pflag"
@@ -39,7 +39,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	service, err := core.NewInMemoryKAPI(log, mainOpts.MinKAPIConfig)
+	service, err := server.NewInMemory(log, mainOpts.MinKAPIConfig)
 	if err != nil {
 		log.Error(err, "failed to initialize InMemoryKAPI")
 		return

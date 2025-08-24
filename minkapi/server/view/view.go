@@ -2,11 +2,12 @@ package view
 
 import (
 	"fmt"
+	"github.com/gardener/scaling-advisor/common/clientutil"
 	"github.com/gardener/scaling-advisor/minkapi/api"
-	"github.com/gardener/scaling-advisor/minkapi/core/eventsink"
-	"github.com/gardener/scaling-advisor/minkapi/core/objutil"
-	"github.com/gardener/scaling-advisor/minkapi/core/store"
-	"github.com/gardener/scaling-advisor/minkapi/core/typeinfo"
+	"github.com/gardener/scaling-advisor/minkapi/server/eventsink"
+	"github.com/gardener/scaling-advisor/minkapi/server/objutil"
+	"github.com/gardener/scaling-advisor/minkapi/server/store"
+	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -16,11 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/dynamicinformer"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 	"strings"
 	"sync"
 	"time"
@@ -54,47 +50,23 @@ func New(log logr.Logger, kubeConfigPath string, scheme *runtime.Scheme, watchQu
 	}, nil
 }
 
-// buildClients currently constructs a remote client. TODO: change this later to an embedded client.
-func buildClients(kubeConfigPath string) (kubernetes.Interface, dynamic.Interface, error) {
-	clientConfig, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", api.ErrInitFailed, err)
-	}
-	clientConfig.ContentType = "application/json"
-	client, err := kubernetes.NewForConfig(clientConfig)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", api.ErrInitFailed, err)
-	}
-	dynClient, err := dynamic.NewForConfig(clientConfig)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", api.ErrInitFailed, err)
-	}
-	return client, dynClient, nil
-}
-
 func (b *baseObjectView) GetClientFacades() (clientFacades *api.ClientFacades, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("%w: %w", api.ErrClientFacadesFailed, err)
 		}
 	}()
-	client, dynClient, err := buildClients(b.kubeConfigPath) //TODO: Make in-mem clients here.
+	client, dynClient, err := clientutil.BuildClients(b.kubeConfigPath) //TODO: Make in-mem clients here.
 	if err != nil {
 		return
 	}
-	informerFactory, dynInformerFactory := buildInformerFactories(client, dynClient, b.watchQueueTimeout)
+	informerFactory, dynInformerFactory := clientutil.BuildInformerFactories(client, dynClient, b.watchQueueTimeout)
 	clientFacades = &api.ClientFacades{
 		Client:             client,
 		DynClient:          dynClient,
 		InformerFactory:    informerFactory,
 		DynInformerFactory: dynInformerFactory,
 	}
-	return
-}
-
-func buildInformerFactories(client kubernetes.Interface, dyncClient dynamic.Interface, resyncPeriod time.Duration) (informerFactory informers.SharedInformerFactory, dynInformerFactory dynamicinformer.DynamicSharedInformerFactory) {
-	informerFactory = informers.NewSharedInformerFactory(client, resyncPeriod)
-	dynInformerFactory = dynamicinformer.NewDynamicSharedInformerFactory(dyncClient, resyncPeriod)
 	return
 }
 

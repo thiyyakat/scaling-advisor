@@ -15,7 +15,7 @@ type Generator struct {
 	log               logr.Logger
 	args              *Args
 	minKAPIConfig     mkapi.MinKAPIConfig
-	minKAPIServer     mkapi.KAPIServer
+	minKAPIServer     mkapi.Server
 	schedulerLauncher api.SchedulerLauncher
 }
 
@@ -176,7 +176,7 @@ func (g *Generator) createSimulationGroups() ([]api.SimulationGroup, error) {
 }
 
 func (g *Generator) createSimulation(simulationName string, nodePool *sacorev1alpha1.NodePool, nodeTemplateName string, zone string) (api.Simulation, error) {
-	simView, err := g.minKAPIServer.GetSimulationView()
+	simView, err := g.minKAPIServer.GetSandboxView()
 	if err != nil {
 		return nil, err
 	}

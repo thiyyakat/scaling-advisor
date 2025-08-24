@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	mkapi "github.com/gardener/scaling-advisor/minkapi/api"
-	mkcore "github.com/gardener/scaling-advisor/minkapi/core"
+	mkcore "github.com/gardener/scaling-advisor/minkapi/server"
 	"github.com/gardener/scaling-advisor/service/api"
 	"github.com/gardener/scaling-advisor/service/internal/scheduler"
 	"github.com/gardener/scaling-advisor/service/internal/service/generator"
@@ -16,7 +16,7 @@ var _ api.ScalingAdvisorService = (*defaultScalingAdvisor)(nil)
 
 type defaultScalingAdvisor struct {
 	minKAPIConfig     mkapi.MinKAPIConfig
-	minKAPIServer     mkapi.KAPIServer
+	minKAPIServer     mkapi.Server
 	schedulerLauncher api.SchedulerLauncher
 	scorer            api.NodeScorer
 	selector          api.NodeScoreSelector
@@ -42,7 +42,7 @@ func (d *defaultScalingAdvisor) Start(ctx context.Context) (err error) {
 		}
 	}()
 	log := logr.FromContextOrDiscard(ctx)
-	d.minKAPIServer, err = mkcore.NewInMemoryKAPI(log, d.minKAPIConfig)
+	d.minKAPIServer, err = mkcore.NewInMemory(log, d.minKAPIConfig)
 	if err != nil {
 		return
 	}

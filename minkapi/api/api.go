@@ -31,6 +31,8 @@ const (
 	DefaultWatchTimeout   = 5 * time.Minute
 	// DefaultKubeConfigPath is the default kubeconfig path if none is specified.
 	DefaultKubeConfigPath = "/tmp/minkapi.yaml"
+	// DefaultBasePrefix is the default path prefix for the base minkapi server
+	DefaultBasePrefix = "base"
 )
 
 // MinKAPIConfig holds the configuration for MinKAPI.
@@ -40,6 +42,9 @@ type MinKAPIConfig struct {
 	WatchTimeout time.Duration
 	// WatchQueueSize is the maximum number of events to queue per watcher
 	WatchQueueSize int
+	// BasePrefix is the path prefix at which the base View of the minkapi service is served. ie KAPI-Service at http://<MinKAPIHost>:<MinKAPIPort>/BasePrefix
+	// Defaults to [DefaultBasePrefix]
+	BasePrefix string
 }
 
 type WatchEventCallback func(watch.Event) (err error)
@@ -85,10 +90,17 @@ type View interface {
 	Close()
 }
 
-type KAPIServer interface {
+// Server represents a MinKAPI server that provides access to a KAPI (kubernetes API) service accessible at http://<MinKAPIHost>:<MinKAPIPort>/basePrefix
+// It also supports methods to create "sandbox" (private) views accessible at http://<MinKAPIHost>:<MinKAPIPort>/sandboxName
+type Server interface {
 	commontypes.Service
+	// GetBaseView returns the foundational View of the KAPI Server which is exposed at http://<MinKAPIHost>:<MinKAPIPort>/basePrefix
 	GetBaseView() View
-	GetSimulationView() (View, error)
+	// GetSandboxView creates or returns a sandboxed KAPI View that is also served as a KAPI Service at http://<MinKAPIHost>:<MinKAPIPort>/sandboxName
+	// A kubeconfig named `minkapi-<sandboxName>.yaml` is also generated in the same directory as the base `minkapi.yaml`
+	//
+	// TODO: discuss whether the above is OK.
+	GetSandboxView(sandboxName string) (View, error)
 }
 
 type MatchCriteria struct {

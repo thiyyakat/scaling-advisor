@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gardener/scaling-advisor/minkapi/api"
-	"github.com/gardener/scaling-advisor/minkapi/core/typeinfo"
+	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 
 	"github.com/go-logr/logr"
 	"golang.org/x/net/context"

@@ -5,6 +5,8 @@
 package typeinfo
 
 import (
+	"fmt"
+	commonconstants "github.com/gardener/scaling-advisor/api/common/constants"
 	"maps"
 	"slices"
 	"strings"
@@ -170,7 +172,7 @@ var (
 		ServerAddressByClientCIDRs: []metav1.ServerAddressByClientCIDR{
 			{
 				ClientCIDR:    "0.0.0.0/0",
-				ServerAddress: "127.0.0.1:8008",
+				ServerAddress: fmt.Sprintf("127.0.0.1:%d/base", commonconstants.DefaultMinKAPIPort),
 			},
 		},
 	}

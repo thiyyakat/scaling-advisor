@@ -7,7 +7,7 @@ import (
 	"github.com/gardener/scaling-advisor/common/nodeutil"
 	"github.com/gardener/scaling-advisor/common/objutil"
 	mkapi "github.com/gardener/scaling-advisor/minkapi/api"
-	"github.com/gardener/scaling-advisor/minkapi/core/typeinfo"
+	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 	"github.com/gardener/scaling-advisor/service/api"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"

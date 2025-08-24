@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package core
+package server
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gardener/scaling-advisor/minkapi/core/view"
+	"github.com/gardener/scaling-advisor/minkapi/server/view"
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"io"
 	kjson "k8s.io/apimachinery/pkg/util/json"
@@ -24,10 +24,10 @@ import (
 	"time"
 
 	"github.com/gardener/scaling-advisor/minkapi/api"
-	"github.com/gardener/scaling-advisor/minkapi/core/configtmpl"
-	"github.com/gardener/scaling-advisor/minkapi/core/podutil"
-	"github.com/gardener/scaling-advisor/minkapi/core/store"
-	"github.com/gardener/scaling-advisor/minkapi/core/typeinfo"
+	"github.com/gardener/scaling-advisor/minkapi/server/configtmpl"
+	"github.com/gardener/scaling-advisor/minkapi/server/podutil"
+	"github.com/gardener/scaling-advisor/minkapi/server/store"
+	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 
 	commonconstants "github.com/gardener/scaling-advisor/api/common/constants"
 	"github.com/go-logr/logr"
@@ -42,55 +42,47 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-var _ api.KAPIServer = (*InMemoryKAPI)(nil)
+var _ api.Server = (*InMemoryKAPI)(nil)
 
 // InMemoryKAPI holds the in-memory stores, watch channels, and version tracking for simple implementation of api.APIServer
 type InMemoryKAPI struct {
 	cfg          api.MinKAPIConfig
 	listenerAddr net.Addr
 	scheme       *runtime.Scheme
-	mux          *http.ServeMux
+	rootMux      *http.ServeMux
 	server       *http.Server
 	baseView     api.View
 	log          logr.Logger
 }
 
-func NewInMemoryKAPI(log logr.Logger, cfg api.MinKAPIConfig) (api.KAPIServer, error) {
+func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: %w", api.ErrInitFailed, err)
+		}
+	}()
 	setMinKAPIConfigDefaults(&cfg)
-	mux := http.NewServeMux()
 	scheme := typeinfo.SupportedScheme
 	baseView, err := view.New(log, cfg.KubeConfigPath, scheme, cfg.WatchQueueSize, cfg.WatchTimeout)
 	if err != nil {
-		return nil, err
+		return
 	}
+	rootMux := http.NewServeMux()
 	s := &InMemoryKAPI{
-		cfg:    cfg,
-		scheme: scheme,
-		mux:    mux,
+		cfg:     cfg,
+		scheme:  scheme,
+		rootMux: rootMux,
 		server: &http.Server{
 			Addr:    net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
-			Handler: mux,
+			Handler: rootMux,
 		},
 		baseView: baseView,
 		log:      log,
 	}
-	s.registerRoutes()
-	return s, nil
-}
-
-func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
-	if cfg.WatchQueueSize <= 0 {
-		cfg.WatchQueueSize = api.DefaultWatchQueueSize
-	}
-	if cfg.WatchTimeout <= 0 {
-		cfg.WatchTimeout = api.DefaultWatchTimeout
-	}
-	if cfg.KubeConfigPath == "" {
-		cfg.KubeConfigPath = api.DefaultKubeConfigPath
-	}
-	if cfg.Port == 0 {
-		cfg.Port = commonconstants.DefaultMinKAPIPort
-	}
+	baseViewMux := http.NewServeMux()
+	s.registerRoutes(baseViewMux, cfg.BasePrefix)
+	k = s
+	return
 }
 
 // Start begins the HTTP server
@@ -105,9 +97,10 @@ func (k *InMemoryKAPI) Start(ctx context.Context) error {
 		return fmt.Errorf("%w: cannot listen on TCP Address %q: %w", api.ErrStartFailed, k.server.Addr, err)
 	}
 	k.listenerAddr = listener.Addr()
+	kapiURL := fmt.Sprintf("http://localhost:%d/%s", k.cfg.Port, k.cfg.BasePrefix)
 	err = configtmpl.GenKubeConfig(configtmpl.KubeConfigParams{
 		KubeConfigPath: k.cfg.KubeConfigPath,
-		URL:            "http://" + k.listenerAddr.String(),
+		URL:            kapiURL,
 	})
 	if err != nil {
 		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
@@ -125,7 +118,7 @@ func (k *InMemoryKAPI) Start(ctx context.Context) error {
 		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
 	}
 	log.Info("sample kube-scheduler-config generated", "path", schedulerTmplParams.KubeSchedulerConfigPath)
-	k.log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr)
+	k.log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr, "kapiURL", kapiURL)
 	if err := k.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("%w: %w", api.ErrServiceFailed, err)
 	}
@@ -143,88 +136,93 @@ func (k *InMemoryKAPI) GetBaseView() api.View {
 	return k.baseView
 }
 
-func (k *InMemoryKAPI) GetSimulationView() (api.View, error) {
+func (k *InMemoryKAPI) GetSandboxView(pathPrefix string) (api.View, error) {
 	// TODO replace with SchedulerView
 	return view.New(k.log, k.cfg.KubeConfigPath, k.scheme, k.cfg.WatchQueueSize, k.cfg.WatchTimeout)
 }
 
 func (k *InMemoryKAPI) GetMux() *http.ServeMux {
-	return k.mux
+	return k.rootMux
 }
 
-func (k *InMemoryKAPI) registerRoutes() {
+func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, pathPrefix string) {
 	if k.cfg.ProfilingEnabled {
 		k.log.Info("profiling enabled - registering /debug/pprof/* handlers")
-		k.mux.HandleFunc("/debug/pprof/", pprof.Index)
-		k.mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-		k.mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-		k.mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-		k.mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-		k.mux.HandleFunc("/trigger-gc", func(w http.ResponseWriter, r *http.Request) {
+		viewMux.HandleFunc("/debug/pprof/", pprof.Index)
+		viewMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		viewMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		viewMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		viewMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		viewMux.HandleFunc("/trigger-gc", func(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintln(w, "GC Triggering")
 			rt.GC() // force garbage collection
 			_, _ = fmt.Fprintln(w, "GC Triggered")
 		})
 	}
 
-	k.mux.HandleFunc("GET /api", k.handleAPIVersions)
-	k.mux.HandleFunc("GET /apis", k.handleAPIGroups)
+	viewMux.HandleFunc("GET /api", k.handleAPIVersions)
+	viewMux.HandleFunc("GET /apis", k.handleAPIGroups)
 
 	// Core API Group and Other API Groups
-	k.registerAPIGroups()
+	k.registerAPIGroups(viewMux)
 
 	for _, d := range typeinfo.SupportedDescriptors {
-		k.registerResourceRoutes(d)
+		k.registerResourceRoutes(viewMux, d)
 	}
+	// Register the view's mux under the pathPrefix, stripping the pathPrefix
+	k.rootMux.Handle("/"+pathPrefix+"/", http.StripPrefix("/"+pathPrefix, viewMux))
+
+	// DO NOT REMOVE: Crap needed for kubectl compatability as it ignores base paths and always makes a call to http://localhost:8084/api/v1/?timeout=32s
+	k.rootMux.HandleFunc("GET /api/v1/", k.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 }
 
-func (k *InMemoryKAPI) registerAPIGroups() {
+func (k *InMemoryKAPI) registerAPIGroups(viewMux *http.ServeMux) {
 	// Core API
-	k.mux.HandleFunc("GET /api/v1/", k.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
+	viewMux.HandleFunc("GET /api/v1/", k.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 
 	// API groups
 	for _, apiList := range typeinfo.SupportedGroupAPIResourceLists {
 		route := fmt.Sprintf("GET /apis/%s/", apiList.APIResources[0].Group)
-		k.mux.HandleFunc(route, k.handleAPIResources(apiList))
+		viewMux.HandleFunc(route, k.handleAPIResources(apiList))
 	}
 }
 
-func (k *InMemoryKAPI) registerResourceRoutes(d typeinfo.Descriptor) {
+func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo.Descriptor) {
 	g := d.GVK.Group
 	r := d.GVR.Resource
 	if d.GVK.Group == "" {
-		k.mux.HandleFunc(fmt.Sprintf("POST /api/v1/namespaces/{namespace}/%s", r), k.handleCreate(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s", r), k.handleListOrWatch(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleGet(d))
-		k.mux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePatch(d))
-		k.mux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePatchStatus(d))
-		k.mux.HandleFunc(fmt.Sprintf("DELETE /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleDelete(d))
-		k.mux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePut(d))        // Update
-		k.mux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
+		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/namespaces/{namespace}/%s", r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s", r), k.handleListOrWatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleGet(d))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePatchStatus(d))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleDelete(d))
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePut(d))        // Update
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
 
 		if d.Kind == typeinfo.PodsDescriptor.Kind {
-			k.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/pods/{name}/binding", k.handleCreatePodBinding)
+			viewMux.HandleFunc("POST /api/v1/namespaces/{namespace}/pods/{name}/binding", k.handleCreatePodBinding)
 		}
 
-		k.mux.HandleFunc(fmt.Sprintf("POST /api/v1/%s", r), k.handleCreate(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /api/v1/%s", r), k.handleListOrWatch(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /api/v1/%s/{name}", r), k.handleGet(d))
-		k.mux.HandleFunc(fmt.Sprintf("PATCH /api/v1/%s/{name}", r), k.handlePatch(d))
-		k.mux.HandleFunc(fmt.Sprintf("DELETE /api/v1/%s/{name}", r), k.handleDelete(d))
-		k.mux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}", r), k.handlePut(d))        // Update
-		k.mux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
+		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/%s", r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s", r), k.handleListOrWatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s/{name}", r), k.handleGet(d))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/%s/{name}", r), k.handlePatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/%s/{name}", r), k.handleDelete(d))
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}", r), k.handlePut(d))        // Update
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
 	} else {
-		k.mux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleCreate(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleListOrWatch(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleGet(d))
-		k.mux.HandleFunc(fmt.Sprintf("PATCH /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePatch(d))
-		k.mux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleDelete(d))
-		k.mux.HandleFunc(fmt.Sprintf("PUT /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePut(d))
+		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleListOrWatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleGet(d))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleDelete(d))
+		viewMux.HandleFunc(fmt.Sprintf("PUT /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePut(d))
 
-		k.mux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/%s", g, r), k.handleCreate(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s", g, r), k.handleListOrWatch(d))
-		k.mux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s/{name}", g, r), k.handleGet(d))
-		k.mux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/%s/{name}", g, r), k.handleDelete(d))
+		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/%s", g, r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s", g, r), k.handleListOrWatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s/{name}", g, r), k.handleGet(d))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/%s/{name}", g, r), k.handleDelete(d))
 	}
 }
 
@@ -827,4 +825,19 @@ func patchStatus(objPtr runtime.Object, key string, patch []byte) error {
 	}
 	statusField.Set(newStatusVal.Elem())
 	return nil
+}
+
+func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
+	if cfg.WatchQueueSize <= 0 {
+		cfg.WatchQueueSize = api.DefaultWatchQueueSize
+	}
+	if cfg.WatchTimeout <= 0 {
+		cfg.WatchTimeout = api.DefaultWatchTimeout
+	}
+	if cfg.KubeConfigPath == "" {
+		cfg.KubeConfigPath = api.DefaultKubeConfigPath
+	}
+	if cfg.Port == 0 {
+		cfg.Port = commonconstants.DefaultMinKAPIPort
+	}
 }
