@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gardener/scaling-advisor/common/webutil"
 	"github.com/gardener/scaling-advisor/minkapi/server/view"
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"io"
@@ -73,8 +74,7 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 		scheme:  scheme,
 		rootMux: rootMux,
 		server: &http.Server{
-			Addr:    net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
-			Handler: rootMux,
+			Addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		},
 		baseView: baseView,
 		log:      log,
@@ -82,6 +82,10 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 	baseViewMux := http.NewServeMux()
 	s.registerRoutes(baseViewMux, cfg.BasePrefix)
 	k = s
+
+	// Wrap the entire mux with the logger middleware
+	serverHandler := webutil.LoggerMiddleware(log, rootMux)
+	s.server.Handler = serverHandler
 	return
 }
 
@@ -97,7 +101,7 @@ func (k *InMemoryKAPI) Start(ctx context.Context) error {
 		return fmt.Errorf("%w: cannot listen on TCP Address %q: %w", api.ErrStartFailed, k.server.Addr, err)
 	}
 	k.listenerAddr = listener.Addr()
-	kapiURL := fmt.Sprintf("http://localhost:%d/%s", k.cfg.Port, k.cfg.BasePrefix)
+	kapiURL := fmt.Sprintf("http://%s:%d/%s", k.cfg.Host, k.cfg.Port, k.cfg.BasePrefix)
 	err = configtmpl.GenKubeConfig(configtmpl.KubeConfigParams{
 		KubeConfigPath: k.cfg.KubeConfigPath,
 		URL:            kapiURL,
@@ -167,7 +171,7 @@ func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, pathPrefix string)
 	k.registerAPIGroups(viewMux)
 
 	for _, d := range typeinfo.SupportedDescriptors {
-		k.registerResourceRoutes(viewMux, d)
+		k.registerResourceRoutes(viewMux, d, k.baseView)
 	}
 	// Register the view's mux under the pathPrefix, stripping the pathPrefix
 	k.rootMux.Handle("/"+pathPrefix+"/", http.StripPrefix("/"+pathPrefix, viewMux))
@@ -187,11 +191,11 @@ func (k *InMemoryKAPI) registerAPIGroups(viewMux *http.ServeMux) {
 	}
 }
 
-func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo.Descriptor) {
+func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo.Descriptor, view api.View) {
 	g := d.GVK.Group
 	r := d.GVR.Resource
 	if d.GVK.Group == "" {
-		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/namespaces/{namespace}/%s", r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/namespaces/{namespace}/%s", r), handleCreate(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s", r), k.handleListOrWatch(d))
 		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleGet(d))
 		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePatch(d))
@@ -204,7 +208,7 @@ func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo
 			viewMux.HandleFunc("POST /api/v1/namespaces/{namespace}/pods/{name}/binding", k.handleCreatePodBinding)
 		}
 
-		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/%s", r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/%s", r), handleCreate(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s", r), k.handleListOrWatch(d))
 		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s/{name}", r), k.handleGet(d))
 		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/%s/{name}", r), k.handlePatch(d))
@@ -212,14 +216,14 @@ func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo
 		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}", r), k.handlePut(d))        // Update
 		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
 	} else {
-		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/namespaces/{namespace}/%s", g, r), handleCreate(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleListOrWatch(d))
 		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleGet(d))
 		viewMux.HandleFunc(fmt.Sprintf("PATCH /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePatch(d))
 		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleDelete(d))
 		viewMux.HandleFunc(fmt.Sprintf("PUT /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePut(d))
 
-		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/%s", g, r), k.handleCreate(d))
+		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/%s", g, r), handleCreate(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s", g, r), k.handleListOrWatch(d))
 		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s/{name}", g, r), k.handleGet(d))
 		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/%s/{name}", g, r), k.handleDelete(d))
@@ -232,7 +236,7 @@ func (k *InMemoryKAPI) handleAPIGroups(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJsonResponse(k.log, w, r, &typeinfo.SupportedAPIGroups)
+	writeJsonResponse(w, r, &typeinfo.SupportedAPIGroups)
 }
 
 // handleAPIVersions returns the list of versions for the core API group
@@ -241,7 +245,7 @@ func (k *InMemoryKAPI) handleAPIVersions(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJsonResponse(k.log, w, r, &typeinfo.SupportedAPIVersions)
+	writeJsonResponse(w, r, &typeinfo.SupportedAPIVersions)
 }
 
 func (k *InMemoryKAPI) handleAPIResources(apiResourceList metav1.APIResourceList) http.HandlerFunc {
@@ -250,13 +254,13 @@ func (k *InMemoryKAPI) handleAPIResources(apiResourceList metav1.APIResourceList
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		writeJsonResponse(k.log, w, r, apiResourceList)
+		writeJsonResponse(w, r, apiResourceList)
 	}
 }
 
-func (k *InMemoryKAPI) handleCreate(d typeinfo.Descriptor) http.HandlerFunc {
+func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
+		s := getStoreOrWriteError(d.GVK, view, w, r)
 		if s == nil {
 			return
 		}
@@ -267,11 +271,11 @@ func (k *InMemoryKAPI) handleCreate(d typeinfo.Descriptor) http.HandlerFunc {
 		mo, err = d.CreateObject()
 		if err != nil {
 			err = fmt.Errorf("cannot create object from objGvk %q: %v", d.GVK, err)
-			k.handleInternalServerError(w, r, err)
+			handleInternalServerError(w, r, err)
 			return
 		}
 
-		if !k.readBodyIntoObj(w, r, mo) {
+		if !readBodyIntoObj(w, r, mo) {
 			return
 		}
 
@@ -285,7 +289,7 @@ func (k *InMemoryKAPI) handleCreate(d typeinfo.Descriptor) http.HandlerFunc {
 		if name == "" {
 			if namePrefix == "" {
 				err = fmt.Errorf("missing both name and generateName in request for creating object of objGvk %q in %q namespace", d.GVK, namespace)
-				handleBadRequest(k.log, w, r, err)
+				handleBadRequest(w, r, err)
 				return
 			}
 			name = typeinfo.GenerateName(namePrefix)
@@ -303,10 +307,10 @@ func (k *InMemoryKAPI) handleCreate(d typeinfo.Descriptor) http.HandlerFunc {
 
 		err = s.Add(mo)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
-		writeJsonResponse(k.log, w, r, mo)
+		writeJsonResponse(w, r, mo)
 	}
 }
 
@@ -321,19 +325,19 @@ func (k *InMemoryKAPI) handlePut(d typeinfo.Descriptor) http.HandlerFunc {
 		key := GetObjectKey(r, d)
 		obj, err := s.GetByKey(key)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
-		if !k.readBodyIntoObj(w, r, obj) {
+		if !readBodyIntoObj(w, r, obj) {
 			return
 		}
 		metaObj := obj.(metav1.Object)
 		err = s.Update(metaObj)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
-		writeJsonResponse(k.log, w, r, obj)
+		writeJsonResponse(w, r, obj)
 	}
 }
 
@@ -346,10 +350,10 @@ func (k *InMemoryKAPI) handleGet(d typeinfo.Descriptor) http.HandlerFunc {
 		key := GetObjectKey(r, d)
 		obj, err := s.GetByKey(key)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
-		writeJsonResponse(k.log, w, r, obj)
+		writeJsonResponse(w, r, obj)
 	}
 }
 
@@ -363,17 +367,17 @@ func (k *InMemoryKAPI) handleDelete(d typeinfo.Descriptor) http.HandlerFunc {
 		objKey := GetObjectName(r, d).String()
 		obj, err := s.GetByKey(objKey)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
 		err = s.Delete(objKey)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
 		mo, err := meta.Accessor(obj)
 		if err != nil {
-			k.handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", objKey, err))
+			handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", objKey, err))
 			return
 		}
 		status := metav1.Status{
@@ -388,7 +392,7 @@ func (k *InMemoryKAPI) handleDelete(d typeinfo.Descriptor) http.HandlerFunc {
 				UID:  mo.GetUID(),
 			},
 		}
-		writeJsonResponse(k.log, w, r, &status)
+		writeJsonResponse(w, r, &status)
 	}
 }
 
@@ -400,7 +404,7 @@ func (k *InMemoryKAPI) handleListOrWatch(d typeinfo.Descriptor) http.HandlerFunc
 
 		labelSelector, err := parseLabelSelector(r)
 		if err != nil {
-			handleBadRequest(k.log, w, r, err)
+			handleBadRequest(w, r, err)
 			return
 		}
 
@@ -424,7 +428,7 @@ func (k *InMemoryKAPI) handleList(d typeinfo.Descriptor, labelSelector labels.Se
 		if err != nil {
 			return
 		}
-		writeJsonResponse(k.log, w, r, listObj)
+		writeJsonResponse(w, r, listObj)
 	}
 }
 
@@ -437,38 +441,38 @@ func (k *InMemoryKAPI) handlePatch(d typeinfo.Descriptor) http.HandlerFunc {
 		key := GetObjectKey(r, d)
 		o, err := s.GetByKey(key)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/strategic-merge-patch+json" && contentType != "application/merge-patch+json" {
 			err = fmt.Errorf("unsupported content type %q for o %q", contentType, key)
-			handleBadRequest(k.log, w, r, err)
+			handleBadRequest(w, r, err)
 			return
 		}
 		patchData, err := io.ReadAll(r.Body)
 		if err != nil {
 			statusErr := apierrors.NewInternalError(err)
-			writeStatusError(k.log, w, r, statusErr)
+			writeStatusError(w, r, statusErr)
 			return
 		}
 		err = patchObject(o, key, contentType, patchData)
 		if err != nil {
 			err = fmt.Errorf("failed to atch o %q: %w", key, err)
-			k.handleInternalServerError(w, r, err)
+			handleInternalServerError(w, r, err)
 			return
 		}
 		mo, err := meta.Accessor(o)
 		if err != nil {
-			k.handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", key, err))
+			handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", key, err))
 			return
 		}
 		err = s.Update(mo)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
-		writeJsonResponse(k.log, w, r, o)
+		writeJsonResponse(w, r, o)
 	}
 }
 
@@ -482,39 +486,39 @@ func (k *InMemoryKAPI) handlePatchStatus(d typeinfo.Descriptor) http.HandlerFunc
 		key := GetObjectKey(r, d)
 		o, err := s.GetByKey(key)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/strategic-merge-patch+json" {
 			err = fmt.Errorf("unsupported content type %q for o %q", contentType, key)
-			k.handleInternalServerError(w, r, err)
+			handleInternalServerError(w, r, err)
 			return
 		}
 
 		patchData, err := io.ReadAll(r.Body)
 		if err != nil {
 			err = fmt.Errorf("failed to read patch body for o %q", key)
-			k.handleInternalServerError(w, r, err)
+			handleInternalServerError(w, r, err)
 			return
 		}
 		err = patchStatus(o, key, patchData)
 		if err != nil {
 			err = fmt.Errorf("failed to atch status for o %q: %w", key, err)
-			k.handleInternalServerError(w, r, err)
+			handleInternalServerError(w, r, err)
 			return
 		}
 		mo, err := meta.Accessor(o)
 		if err != nil {
-			k.handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", key, err))
+			handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", key, err))
 			return
 		}
 		err = s.Update(mo)
 		if err != nil {
-			k.handleError(w, r, err)
+			handleError(w, r, err)
 			return
 		}
-		writeJsonResponse(k.log, w, r, o)
+		writeJsonResponse(w, r, o)
 	}
 }
 
@@ -579,13 +583,13 @@ func (k *InMemoryKAPI) handleCreatePodBinding(w http.ResponseWriter, r *http.Req
 		return
 	}
 	binding := corev1.Binding{}
-	if !k.readBodyIntoObj(w, r, &binding) {
+	if !readBodyIntoObj(w, r, &binding) {
 		return
 	}
 	key := GetObjectKey(r, d)
 	obj, err := s.GetByKey(key)
 	if err != nil {
-		k.handleError(w, r, err)
+		handleError(w, r, err)
 		return
 	}
 	pod := obj.(*corev1.Pod)
@@ -597,7 +601,7 @@ func (k *InMemoryKAPI) handleCreatePodBinding(w http.ResponseWriter, r *http.Req
 	err = s.Update(pod)
 	if err != nil {
 		k.log.Error(err, "cannot assign pod to node", "podName", pod.Name, "podNamespace", pod.Namespace, "nodeName", pod.Spec.NodeName)
-		k.handleError(w, r, err)
+		handleError(w, r, err)
 		return
 	}
 	k.log.V(3).Info("assigned pod to node", "podName", pod.Name, "podNamespace", pod.Namespace, "nodeName", pod.Spec.NodeName)
@@ -607,79 +611,38 @@ func (k *InMemoryKAPI) handleCreatePodBinding(w http.ResponseWriter, r *http.Req
 		Status:   metav1.StatusSuccess,
 		Code:     http.StatusCreated,
 	}
-	writeJsonResponse(k.log, w, r, statusOK)
+	writeJsonResponse(w, r, statusOK)
 }
 
-func writeStatusError(log logr.Logger, w http.ResponseWriter, r *http.Request, statusError *apierrors.StatusError) {
+func writeStatusError(w http.ResponseWriter, r *http.Request, statusError *apierrors.StatusError) {
 	w.WriteHeader(int(statusError.ErrStatus.Code))
-	writeJsonResponse(log, w, r, statusError.ErrStatus)
-}
-
-// writeJsonResponse sets Content-Type to application/json  and encodes the object to the response writer.
-func writeJsonResponse(log logr.Logger, w http.ResponseWriter, r *http.Request, obj any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(obj); err != nil {
-		log.Error(err, "cannot  encode response", "method", r.Method, "requestURI", r.RequestURI, "obj", obj)
-		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-	}
+	writeJsonResponse(w, r, statusError.ErrStatus)
 }
 
 func (k *InMemoryKAPI) getStoreOrWriteError(gvk schema.GroupVersionKind, w http.ResponseWriter, r *http.Request) (s api.ResourceStore) {
 	s, err := k.baseView.GetResourceStore(gvk)
 	if err != nil {
 		k.log.Error(err, "store error", "gvk", gvk)
-		k.handleInternalServerError(w, r, err)
+		handleInternalServerError(w, r, err)
 	}
 	return s
 }
 
-func (k *InMemoryKAPI) readBodyIntoObj(w http.ResponseWriter, r *http.Request, obj any) (ok bool) {
+func readBodyIntoObj(w http.ResponseWriter, r *http.Request, obj any) (ok bool) {
 	data, err := io.ReadAll(r.Body)
 	if err != nil {
-		handleBadRequest(k.log, w, r, err)
+		handleBadRequest(w, r, err)
 		ok = false
 		return
 	}
 	if err := json.Unmarshal(data, obj); err != nil {
 		err = fmt.Errorf("cannot unmarshal JSON for request %q: %w", r.RequestURI, err)
-		handleBadRequest(k.log, w, r, err)
+		handleBadRequest(w, r, err)
 		ok = false
 		return
 	}
 	ok = true
 	return
-}
-
-func (k *InMemoryKAPI) handleError(w http.ResponseWriter, r *http.Request, err error) {
-	var statusErr *apierrors.StatusError
-	if errors.As(err, &statusErr) {
-		k.handleStatusError(w, r, statusErr)
-	} else {
-		k.handleInternalServerError(w, r, err)
-	}
-}
-
-func (k *InMemoryKAPI) handleStatusError(w http.ResponseWriter, r *http.Request, statusErr *apierrors.StatusError) {
-	w.WriteHeader(int(statusErr.ErrStatus.Code))
-	w.Header().Set("Content-Type", "application/json")
-	writeJsonResponse(k.log, w, r, statusErr.ErrStatus)
-}
-
-func (k *InMemoryKAPI) handleInternalServerError(w http.ResponseWriter, r *http.Request, err error) {
-	statusErr := apierrors.NewInternalError(err)
-	k.log.Error(err, "internal server error")
-	w.WriteHeader(http.StatusInternalServerError)
-	w.Header().Set("Content-Type", "application/json")
-	writeJsonResponse(k.log, w, r, statusErr.ErrStatus)
-}
-
-func handleBadRequest(log logr.Logger, w http.ResponseWriter, r *http.Request, err error) {
-	err = fmt.Errorf("cannot handle request %q: %w", r.Method+" "+r.RequestURI, err)
-	log.Error(err, "bad request", "method", r.Method, "requestURI", r.RequestURI)
-	statusErr := apierrors.NewBadRequest(err.Error())
-	w.WriteHeader(http.StatusBadRequest)
-	w.Header().Set("Content-Type", "application/json")
-	writeJsonResponse(log, w, r, statusErr.ErrStatus)
 }
 
 func getParseResourceVersion(log logr.Logger, w http.ResponseWriter, r *http.Request) (resourceVersion int64, ok bool) {
@@ -691,7 +654,7 @@ func getParseResourceVersion(log logr.Logger, w http.ResponseWriter, r *http.Req
 	}
 	resourceVersion, err := parseResourceVersion(paramValue)
 	if err != nil {
-		handleBadRequest(log, w, r, fmt.Errorf("invalid resource version %q: %w", paramValue, err))
+		handleBadRequest(w, r, fmt.Errorf("invalid resource version %q: %w", paramValue, err))
 		return
 	}
 	ok = true
@@ -839,5 +802,57 @@ func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
 	}
 	if cfg.Port == 0 {
 		cfg.Port = commonconstants.DefaultMinKAPIPort
+	}
+}
+
+func getStoreOrWriteError(gvk schema.GroupVersionKind, view api.View, w http.ResponseWriter, r *http.Request) (s api.ResourceStore) {
+	log := logr.FromContextOrDiscard(r.Context())
+	s, err := view.GetResourceStore(gvk)
+	if err != nil {
+		log.Error(err, "store error", "gvk", gvk)
+		handleInternalServerError(w, r, err)
+	}
+	return s
+}
+func handleError(w http.ResponseWriter, r *http.Request, err error) {
+	var statusErr *apierrors.StatusError
+	if errors.As(err, &statusErr) {
+		handleStatusError(w, r, statusErr)
+	} else {
+		handleInternalServerError(w, r, err)
+	}
+}
+func handleStatusError(w http.ResponseWriter, r *http.Request, statusErr *apierrors.StatusError) {
+	w.WriteHeader(int(statusErr.ErrStatus.Code))
+	w.Header().Set("Content-Type", "application/json")
+	writeJsonResponse(w, r, statusErr.ErrStatus)
+}
+
+func handleInternalServerError(w http.ResponseWriter, r *http.Request, err error) {
+	log := logr.FromContextOrDiscard(r.Context())
+	statusErr := apierrors.NewInternalError(err)
+	log.Error(err, "internal server error")
+	w.WriteHeader(http.StatusInternalServerError)
+	w.Header().Set("Content-Type", "application/json")
+	writeJsonResponse(w, r, statusErr.ErrStatus)
+}
+
+func handleBadRequest(w http.ResponseWriter, r *http.Request, err error) {
+	log := logr.FromContextOrDiscard(r.Context())
+	err = fmt.Errorf("cannot handle request %q: %w", r.Method+" "+r.RequestURI, err)
+	log.Error(err, "bad request", "method", r.Method, "requestURI", r.RequestURI)
+	statusErr := apierrors.NewBadRequest(err.Error())
+	w.WriteHeader(http.StatusBadRequest)
+	w.Header().Set("Content-Type", "application/json")
+	writeJsonResponse(w, r, statusErr.ErrStatus)
+}
+
+// writeJsonResponse sets Content-Type to application/json  and encodes the object to the response writer.
+func writeJsonResponse(w http.ResponseWriter, r *http.Request, obj any) {
+	log := logr.FromContextOrDiscard(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(obj); err != nil {
+		log.Error(err, "cannot  encode response", "obj", obj)
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
