@@ -265,7 +265,7 @@ type NodeScore struct {
 	UnscheduledPods []PodResourceInfo
 	// Value is the score value for this Node.
 	Value              int
-	ScaledNodeResource *NodeResourceInfo
+	ScaledNodeResource NodeResourceInfo
 }
 
 type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing, weights map[corev1.ResourceName]float64) (NodeScorer, error)
