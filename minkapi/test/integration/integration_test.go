@@ -6,12 +6,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	commoncli "github.com/gardener/scaling-advisor/common/cli"
-	"github.com/gardener/scaling-advisor/common/clientutil"
-	"github.com/gardener/scaling-advisor/common/objutil"
+	"k8s.io/apimachinery/pkg/watch"
+	"os"
+	"os/signal"
+	"syscall"
+	"testing"
+	"time"
+
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/cli"
 	"github.com/gardener/scaling-advisor/minkapi/server"
+
+	commoncli "github.com/gardener/scaling-advisor/common/cli"
+	"github.com/gardener/scaling-advisor/common/clientutil"
+	"github.com/gardener/scaling-advisor/common/objutil"
 	"github.com/go-logr/logr"
 	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
@@ -20,11 +28,6 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
-	"os"
-	"os/signal"
-	"syscall"
-	"testing"
-	"time"
 )
 
 var state suiteState
@@ -122,6 +125,24 @@ func TestBaseViewCreateGetNodes(t *testing.T) {
 
 }
 
+func TestWatchPods(t *testing.T) {
+	ctx := context.Background()
+	watcher, err := state.client.CoreV1().Pods("").Watch(ctx, metav1.ListOptions{Watch: true})
+	if err != nil {
+		t.Fatalf("failed to create pods watcher: %v", err)
+		return
+	}
+	listObjects(t, watcher)
+}
+
+func listObjects(t *testing.T, watcher watch.Interface) {
+	t.Helper()
+	watchCh := watcher.ResultChan()
+	t.Logf("Iterating watchCh: %v", watchCh)
+	for ev := range watchCh {
+		t.Logf("%v: %v", ev.Type, ev.Object)
+	}
+}
 func checkNodeIsSame(t *testing.T, got, want *corev1.Node) {
 	t.Helper()
 	if got.Name != want.Name {
