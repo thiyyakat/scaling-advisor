@@ -155,7 +155,7 @@ func (s *InMemResourceStore) GetByKey(key string) (o runtime.Object, err error) 
 	return
 }
 
-func (s *InMemResourceStore) List(namespace string, labelSelector labels.Selector) (listObj runtime.Object, err error) {
+func (s *InMemResourceStore) List(c api.MatchCriteria) (listObj runtime.Object, err error) {
 	items := s.delegate.List()
 	currVersionStr := fmt.Sprintf("%d", s.CurrentResourceVersion())
 	typesMap := typeinfo.SupportedScheme.KnownTypes(s.objGVK.GroupVersion())
@@ -197,10 +197,11 @@ func (s *InMemResourceStore) List(namespace string, labelSelector labels.Selecto
 			s.log.Error(err, "cannot access meta object", "obj", obj)
 			continue
 		}
-		if namespace != "" && metaV1Obj.GetNamespace() != namespace {
+
+		if c.Namespace != "" && metaV1Obj.GetNamespace() != c.Namespace {
 			continue
 		}
-		if !labelSelector.Matches(labels.Set(metaV1Obj.GetLabels())) {
+		if !c.LabelSelector.Matches(labels.Set(metaV1Obj.GetLabels())) {
 			continue
 		}
 		val := reflect.ValueOf(obj)

@@ -9,20 +9,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gardener/scaling-advisor/common/webutil"
-	"github.com/gardener/scaling-advisor/minkapi/server/view"
-	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"io"
-	kjson "k8s.io/apimachinery/pkg/util/json"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
-	"k8s.io/client-go/tools/cache"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"reflect"
 	rt "runtime"
 	"strconv"
-	"time"
+
+	"github.com/gardener/scaling-advisor/common/webutil"
+	"github.com/gardener/scaling-advisor/minkapi/server/view"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
+	kjson "k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/server/configtmpl"
@@ -39,7 +39,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -196,10 +195,10 @@ func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo
 	r := d.GVR.Resource
 	if d.GVK.Group == "" {
 		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/namespaces/{namespace}/%s", r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s", r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleGet(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePatchStatus(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s", r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s/{name}", r), handleGet(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}", r), handlePatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}/status", r), handlePatchStatus(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleDelete(d))
 		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePut(d))        // Update
 		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
@@ -209,23 +208,23 @@ func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo
 		}
 
 		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/%s", r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s", r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s/{name}", r), k.handleGet(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/%s/{name}", r), k.handlePatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s", r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s/{name}", r), handleGet(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/%s/{name}", r), handlePatch(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/%s/{name}", r), k.handleDelete(d))
 		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}", r), k.handlePut(d))        // Update
 		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
 	} else {
 		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/namespaces/{namespace}/%s", g, r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleGet(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePatch(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s", g, r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), handleGet(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), handlePatch(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleDelete(d))
 		viewMux.HandleFunc(fmt.Sprintf("PUT /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePut(d))
 
 		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/%s", g, r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s", g, r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s/{name}", g, r), k.handleGet(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s", g, r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s/{name}", g, r), handleGet(d, view))
 		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/%s/{name}", g, r), k.handleDelete(d))
 	}
 }
@@ -284,28 +283,7 @@ func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 			namespace = GetObjectName(r, d).Namespace
 			mo.SetNamespace(namespace)
 		}
-		name := mo.GetName()
-		namePrefix := mo.GetGenerateName()
-		if name == "" {
-			if namePrefix == "" {
-				err = fmt.Errorf("missing both name and generateName in request for creating object of objGvk %q in %q namespace", d.GVK, namespace)
-				handleBadRequest(w, r, err)
-				return
-			}
-			name = typeinfo.GenerateName(namePrefix)
-		}
-		mo.SetName(name)
-
-		createTimestamp := mo.GetCreationTimestamp()
-		if (&createTimestamp).IsZero() { // only set creationTimestamp if not already set.
-			mo.SetCreationTimestamp(metav1.Time{Time: time.Now()})
-		}
-
-		if mo.GetUID() == "" {
-			mo.SetUID(uuid.NewUUID())
-		}
-
-		err = s.Add(mo)
+		err = view.StoreObject(d.GVK, mo)
 		if err != nil {
 			handleError(w, r, err)
 			return
@@ -341,9 +319,9 @@ func (k *InMemoryKAPI) handlePut(d typeinfo.Descriptor) http.HandlerFunc {
 	}
 }
 
-func (k *InMemoryKAPI) handleGet(d typeinfo.Descriptor) http.HandlerFunc {
+func handleGet(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
+		s := getStoreOrWriteError(d.GVK, view, w, r)
 		if s == nil {
 			return
 		}
@@ -396,7 +374,7 @@ func (k *InMemoryKAPI) handleDelete(d typeinfo.Descriptor) http.HandlerFunc {
 	}
 }
 
-func (k *InMemoryKAPI) handleListOrWatch(d typeinfo.Descriptor) http.HandlerFunc {
+func handleListOrWatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		isWatch := query.Get("watch")
@@ -408,23 +386,24 @@ func (k *InMemoryKAPI) handleListOrWatch(d typeinfo.Descriptor) http.HandlerFunc
 			return
 		}
 
-		if isWatch == "true" {
-			delegate = k.handleWatch(d, labelSelector)
+		if isWatch == "true" || isWatch == "1" {
+			delegate = handleWatch(d, view, labelSelector)
 		} else {
-			delegate = k.handleList(d, labelSelector)
+			delegate = handleList(d, view, labelSelector)
 		}
 		delegate.ServeHTTP(w, r)
 	}
 }
 
-func (k *InMemoryKAPI) handleList(d typeinfo.Descriptor, labelSelector labels.Selector) http.HandlerFunc {
+func handleList(d typeinfo.Descriptor, view api.View, labelSelector labels.Selector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
+		s := getStoreOrWriteError(d.GVK, view, w, r)
 		if s == nil {
 			return
 		}
 		namespace := r.PathValue("namespace")
-		listObj, err := s.List(namespace, labelSelector)
+		c := api.MatchCriteria{Namespace: namespace, LabelSelector: labelSelector}
+		listObj, err := view.ListObjects(d.GVK, c) //s.List(c)
 		if err != nil {
 			return
 		}
@@ -432,9 +411,9 @@ func (k *InMemoryKAPI) handleList(d typeinfo.Descriptor, labelSelector labels.Se
 	}
 }
 
-func (k *InMemoryKAPI) handlePatch(d typeinfo.Descriptor) http.HandlerFunc {
+func handlePatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
+		s := getStoreOrWriteError(d.GVK, view, w, r)
 		if s == nil {
 			return
 		}
@@ -446,7 +425,7 @@ func (k *InMemoryKAPI) handlePatch(d typeinfo.Descriptor) http.HandlerFunc {
 		}
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/strategic-merge-patch+json" && contentType != "application/merge-patch+json" {
-			err = fmt.Errorf("unsupported content type %q for o %q", contentType, key)
+			err = fmt.Errorf("unsupported content type %q for object %q", contentType, key)
 			handleBadRequest(w, r, err)
 			return
 		}
@@ -458,7 +437,7 @@ func (k *InMemoryKAPI) handlePatch(d typeinfo.Descriptor) http.HandlerFunc {
 		}
 		err = patchObject(o, key, contentType, patchData)
 		if err != nil {
-			err = fmt.Errorf("failed to atch o %q: %w", key, err)
+			err = fmt.Errorf("failed to patch object %q: %w", key, err)
 			handleInternalServerError(w, r, err)
 			return
 		}
@@ -476,9 +455,9 @@ func (k *InMemoryKAPI) handlePatch(d typeinfo.Descriptor) http.HandlerFunc {
 	}
 }
 
-func (k *InMemoryKAPI) handlePatchStatus(d typeinfo.Descriptor) http.HandlerFunc {
+func handlePatchStatus(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
+		s := getStoreOrWriteError(d.GVK, view, w, r)
 		if s == nil {
 			return
 		}
@@ -504,7 +483,7 @@ func (k *InMemoryKAPI) handlePatchStatus(d typeinfo.Descriptor) http.HandlerFunc
 		}
 		err = patchStatus(o, key, patchData)
 		if err != nil {
-			err = fmt.Errorf("failed to atch status for o %q: %w", key, err)
+			err = fmt.Errorf("failed to patch status for o %q: %w", key, err)
 			handleInternalServerError(w, r, err)
 			return
 		}
@@ -522,9 +501,9 @@ func (k *InMemoryKAPI) handlePatchStatus(d typeinfo.Descriptor) http.HandlerFunc
 	}
 }
 
-func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.Selector) http.HandlerFunc {
+func handleWatch(d typeinfo.Descriptor, view api.View, labelSelector labels.Selector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
+		s := getStoreOrWriteError(d.GVK, view, w, r)
 		if s == nil {
 			return
 		}
@@ -536,7 +515,7 @@ func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.S
 		)
 
 		namespace = r.PathValue("namespace")
-		startVersion, ok = getParseResourceVersion(k.log, w, r)
+		startVersion, ok = getParseResourceVersion(w, r)
 		if !ok {
 			return
 		}
@@ -548,12 +527,13 @@ func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.S
 			return
 		}
 
+		log := logr.FromContextOrDiscard(r.Context())
 		err := s.Watch(r.Context(), startVersion, namespace, labelSelector, func(event watch.Event) error {
-			metaObj, err := store.AsMeta(k.log, event.Object)
+			metaObj, err := store.AsMeta(log, event.Object)
 			if err != nil {
 				return err
 			}
-			eventJson, err := buildWatchEventJson(k.log, &event)
+			eventJson, err := buildWatchEventJson(log, &event)
 			if err != nil {
 				err = fmt.Errorf("cannot  encode watch %q event for object name %q, namespace %q, resourceVersion %q: %w",
 					event.Type, metaObj.GetName(), metaObj.GetNamespace(), metaObj.GetResourceVersion(), err)
@@ -565,7 +545,7 @@ func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.S
 		})
 
 		if err != nil {
-			k.log.Error(err, "watch failed", "gvk", d.GVK, "namespace", namespace, "startVersion", startVersion, "labelSelector", labelSelector)
+			log.Error(err, "watch failed", "gvk", d.GVK, "namespace", namespace, "startVersion", startVersion, "labelSelector", labelSelector)
 		}
 	}
 }
@@ -645,7 +625,7 @@ func readBodyIntoObj(w http.ResponseWriter, r *http.Request, obj any) (ok bool) 
 	return
 }
 
-func getParseResourceVersion(log logr.Logger, w http.ResponseWriter, r *http.Request) (resourceVersion int64, ok bool) {
+func getParseResourceVersion(w http.ResponseWriter, r *http.Request) (resourceVersion int64, ok bool) {
 	paramValue := r.URL.Query().Get("resourceVersion")
 	if paramValue == "" {
 		ok = true
