@@ -9,12 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gardener/scaling-advisor/minkapi/server/view"
-	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"io"
-	kjson "k8s.io/apimachinery/pkg/util/json"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
-	"k8s.io/client-go/tools/cache"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -28,9 +23,11 @@ import (
 	"github.com/gardener/scaling-advisor/minkapi/server/podutil"
 	"github.com/gardener/scaling-advisor/minkapi/server/store"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
+	"github.com/gardener/scaling-advisor/minkapi/server/view"
 
 	commonconstants "github.com/gardener/scaling-advisor/api/common/constants"
 	"github.com/go-logr/logr"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -38,8 +35,11 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	kjson "k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
 )
 
 var _ api.Server = (*InMemoryKAPI)(nil)
@@ -404,7 +404,7 @@ func (k *InMemoryKAPI) handleListOrWatch(d typeinfo.Descriptor) http.HandlerFunc
 			return
 		}
 
-		if isWatch == "true" {
+		if isWatch == "true" || isWatch == "1" { // FIXME : should check "1" as well
 			delegate = k.handleWatch(d, labelSelector)
 		} else {
 			delegate = k.handleList(d, labelSelector)
