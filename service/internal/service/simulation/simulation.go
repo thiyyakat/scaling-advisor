@@ -132,13 +132,15 @@ func (s *defaultSimulation) getScaledNodeAssignment() *api.NodePodAssignment {
 }
 
 func (s *defaultSimulation) launchSchedulerForSimulation(ctx context.Context, simView mkapi.View) (api.SchedulerHandle, error) {
-	client, dynClient := simView.GetClients()
-	informerFactory, dynInformerFactory := simView.GetInformerFactories()
+	clientFacades, err := simView.GetClientFacades()
+	if err != nil {
+		return nil, err
+	}
 	schedLaunchParams := &api.SchedulerLaunchParams{
-		Client:             client,
-		DynClient:          dynClient,
-		InformerFactory:    informerFactory,
-		DynInformerFactory: dynInformerFactory,
+		Client:             clientFacades.Client,
+		DynClient:          clientFacades.DynClient,
+		InformerFactory:    clientFacades.InformerFactory,
+		DynInformerFactory: clientFacades.DynInformerFactory,
 		EventSink:          simView.GetEventSink(),
 	}
 	return s.args.SchedulerLauncher.Launch(ctx, schedLaunchParams)
