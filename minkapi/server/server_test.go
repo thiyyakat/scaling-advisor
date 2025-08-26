@@ -10,7 +10,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gardener/scaling-advisor/common/objutil"
+	"github.com/gardener/scaling-advisor/common/testutil"
 	"io"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/cache"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +27,6 @@ import (
 	"github.com/gardener/scaling-advisor/minkapi/cli"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 	"github.com/gardener/scaling-advisor/minkapi/server/view"
-	testutils "github.com/gardener/scaling-advisor/minkapi/test/utils"
 
 	"github.com/go-logr/logr"
 	"github.com/google/go-cmp/cmp"
@@ -109,7 +112,7 @@ func TestPatchPodStatus(t *testing.T) {
 				err = patchStatus(obj.(runtime.Object), tc.key, []byte(tc.patch))
 			}
 			if err != nil {
-				testutils.AssertError(t, err, tc.patchErr)
+				testutil.AssertError(t, err, tc.patchErr)
 				return
 			}
 			t.Logf("Patched pod status: %#v", pod.Status.Conditions)
@@ -120,6 +123,7 @@ func TestPatchPodStatus(t *testing.T) {
 	}
 }
 
+// TestPatchObjectUsingEvent TODO: needs to be moved to common objutil_test.go
 func TestPatchObjectUsingEvent(t *testing.T) {
 	var patchEventSeries = `
 {
@@ -177,7 +181,7 @@ func TestPatchObjectUsingEvent(t *testing.T) {
 
 	for name, tc := range contentTypeTests {
 		t.Run(name, func(t *testing.T) {
-			key := "default/a-bingo.aaabbb"
+			name := cache.NewObjectName("default", "a-bingo.aaabbb")
 			obj, err := typeinfo.EventsDescriptor.CreateObject()
 			if err != nil {
 				t.Errorf("Failed to create event: %v", err)
@@ -185,12 +189,12 @@ func TestPatchObjectUsingEvent(t *testing.T) {
 			}
 			event := obj.(*eventsv1.Event)
 			if tc.passNilObj {
-				err = patchObject(nil, key, tc.contentType, []byte(tc.patchData))
+				err = objutil.PatchObject(nil, name, types.PatchType(tc.contentType), []byte(tc.patchData))
 			} else {
-				err = patchObject(obj.(runtime.Object), key, tc.contentType, []byte(tc.patchData))
+				err = objutil.PatchObject(obj.(runtime.Object), name, types.PatchType(tc.contentType), []byte(tc.patchData))
 			}
 			if err != nil {
-				testutils.AssertError(t, err, tc.patchErr)
+				testutil.AssertError(t, err, tc.patchErr)
 				return
 			}
 			t.Logf("Patched event series: %v", event.Series)
