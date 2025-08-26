@@ -37,16 +37,21 @@ const (
 	DefaultBasePrefix = "base"
 )
 
+// WatchConfig holds config parameters relevant for watchers.
+type WatchConfig struct {
+	// QueueSize is the maximum number of events to queue per watcher
+	QueueSize int
+	// Timeout represents the timeout for watches following which MinKAPI service will close the connection and ends the watch.
+	Timeout time.Duration
+}
+
 // MinKAPIConfig holds the configuration for MinKAPI.
 type MinKAPIConfig struct {
-	commontypes.ServerConfig
-	// WatchTimeout represents the timeout for watches following which MinKAPI service will close the connection and ends the watch.
-	WatchTimeout time.Duration
-	// WatchQueueSize is the maximum number of events to queue per watcher
-	WatchQueueSize int
 	// BasePrefix is the path prefix at which the base View of the minkapi service is served. ie KAPI-Service at http://<MinKAPIHost>:<MinKAPIPort>/BasePrefix
 	// Defaults to [DefaultBasePrefix]
 	BasePrefix string
+	commontypes.ServerConfig
+	WatchConfig WatchConfig
 }
 
 type WatchEventCallback func(watch.Event) (err error)
@@ -66,6 +71,15 @@ type ResourceStore interface {
 	Shutdown()
 }
 
+type ResourceStoreArgs struct {
+	Name          string
+	ObjectGVK     schema.GroupVersionKind
+	ObjectListGVK schema.GroupVersionKind
+	// Scheme is the runtime Scheme used by the KAPI objects storable in this store.
+	Scheme      *runtime.Scheme
+	WatchConfig WatchConfig
+}
+
 type EventSink interface {
 	events.EventSink
 	List() []*eventsv1.Event
@@ -82,6 +96,7 @@ type ClientFacades struct {
 // View is the high-level facade to a repository of objects of different types (GVK).
 // TODO: Think of a better name. Rename this to Repository or RepoView, also add godoc ?
 type View interface {
+	GetName() string
 	GetClientFacades() (*ClientFacades, error)
 	GetResourceStore(gvk schema.GroupVersionKind) (ResourceStore, error)
 	GetEventSink() EventSink
@@ -90,7 +105,7 @@ type View interface {
 	UpdateObject(gvk schema.GroupVersionKind, obj metav1.Object) error
 	UpdatePodNodeBinding(podName cache.ObjectName, binding corev1.Binding) (*corev1.Pod, error)
 	PatchObject(gvk schema.GroupVersionKind, objName cache.ObjectName, patchType types.PatchType, patchData []byte) (patchedObj runtime.Object, err error)
-	PatchObjectStatus(gvk schema.GroupVersionKind, objName cache.ObjectName, patchType types.PatchType, patchData []byte) (patchedObj runtime.Object, err error)
+	PatchObjectStatus(gvk schema.GroupVersionKind, objName cache.ObjectName, patchData []byte) (patchedObj runtime.Object, err error)
 	ListObjects(gvk schema.GroupVersionKind, criteria MatchCriteria) (runtime.Object, error)
 	WatchObjects(ctx context.Context, gvk schema.GroupVersionKind, startVersion int64, namespace string, labelSelector labels.Selector, eventCallback WatchEventCallback) error
 	DeleteObject(gvk schema.GroupVersionKind, objName cache.ObjectName) error
@@ -102,17 +117,28 @@ type View interface {
 	Close()
 }
 
+type ViewArgs struct {
+	// Name represents name of View
+	Name string
+	// KubeConfigPath is the path of the kubeconfig file corresponding to this view
+	KubeConfigPath string
+	// Scheme is the runtime Scheme used by KAPI objects exposed by this view
+	Scheme      *runtime.Scheme
+	WatchConfig WatchConfig
+}
+
 // Server represents a MinKAPI server that provides access to a KAPI (kubernetes API) service accessible at http://<MinKAPIHost>:<MinKAPIPort>/basePrefix
 // It also supports methods to create "sandbox" (private) views accessible at http://<MinKAPIHost>:<MinKAPIPort>/sandboxName
 type Server interface {
 	commontypes.Service
 	// GetBaseView returns the foundational View of the KAPI Server which is exposed at http://<MinKAPIHost>:<MinKAPIPort>/basePrefix
 	GetBaseView() View
-	// GetSandboxView creates or returns a sandboxed KAPI View that is also served as a KAPI Service at http://<MinKAPIHost>:<MinKAPIPort>/sandboxName
-	// A kubeconfig named `minkapi-<sandboxName>.yaml` is also generated in the same directory as the base `minkapi.yaml`
+	// GetSandboxView creates or returns a sandboxed KAPI View with the given name that is also served as a KAPI Service
+	// at http://<MinKAPIHost>:<MinKAPIPort>/sandboxName. A kubeconfig named `minkapi-<name>.yaml` is also generated
+	// in the same directory as the base `minkapi.yaml`.  The sandbox name should be a valid path-prefix, ie no-spaces.
 	//
 	// TODO: discuss whether the above is OK.
-	GetSandboxView(sandboxName string) (View, error)
+	GetSandboxView(name string) (View, error)
 }
 
 type MatchCriteria struct {

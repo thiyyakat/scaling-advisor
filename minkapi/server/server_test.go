@@ -905,7 +905,13 @@ func startMinkapiService(t *testing.T) (*InMemoryKAPI, *http.ServeMux, error) { 
 	}()
 	setMinKAPIConfigDefaults(&cfg)
 	scheme := typeinfo.SupportedScheme
-	baseView, err := view.New(log, cfg.KubeConfigPath, scheme, cfg.WatchQueueSize, cfg.WatchTimeout)
+	baseView, err := view.New(log, &api.ViewArgs{
+		Name:           api.DefaultBasePrefix,
+		KubeConfigPath: cfg.KubeConfigPath,
+		Scheme:         scheme,
+		WatchConfig:    cfg.WatchConfig,
+	})
+	//baseView, err := view.New(log, cfg.KubeConfigPath, scheme, cfg.WatchQueueSize, cfg.WatchTimeout)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -922,7 +928,7 @@ func startMinkapiService(t *testing.T) (*InMemoryKAPI, *http.ServeMux, error) { 
 		log:      log,
 	}
 	baseViewMux := http.NewServeMux()
-	s.registerRoutes(baseViewMux, cfg.BasePrefix)
+	s.registerRoutes(baseViewMux, baseView)
 	return s, baseViewMux, err
 }
 

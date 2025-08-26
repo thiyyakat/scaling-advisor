@@ -51,8 +51,8 @@ func setupFlagsToOpts() (*pflag.FlagSet, *MainOpts) {
 		mainOpts.Port = commonconstants.DefaultMinKAPIPort
 	}
 	commoncli.MapServerConfigFlags(flagSet, &mainOpts.ServerConfig)
-	flagSet.IntVarP(&mainOpts.WatchQueueSize, "watch-queue-size", "s", api.DefaultWatchQueueSize, "max number of events to queue per watcher")
-	flagSet.DurationVarP(&mainOpts.WatchTimeout, "watch-timeout", "t", api.DefaultWatchTimeout, "watch timeout after which connection is closed and watch removed")
+	flagSet.IntVarP(&mainOpts.WatchConfig.QueueSize, "watch-queue-size", "s", api.DefaultWatchQueueSize, "max number of events to queue per watcher")
+	flagSet.DurationVarP(&mainOpts.WatchConfig.Timeout, "watch-timeout", "t", api.DefaultWatchTimeout, "watch timeout after which connection is closed and watch removed")
 	flagSet.StringVarP(&mainOpts.BasePrefix, "base-prefix", "b", api.DefaultBasePrefix, "base path prefix for the base view of the minkapi service")
 
 	klogFlagSet := flag.NewFlagSet("klog", flag.ContinueOnError)

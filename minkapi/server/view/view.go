@@ -30,45 +30,52 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
-var _ api.View = (*baseObjectView)(nil)
+var _ api.View = (*baseView)(nil)
 
-type baseObjectView struct {
-	log               logr.Logger
-	mu                sync.RWMutex
-	kubeConfigPath    string
-	scheme            *runtime.Scheme
-	stores            map[schema.GroupVersionKind]*store.InMemResourceStore
-	eventSink         api.EventSink
-	watchQueueTimeout time.Duration
+type baseView struct {
+	log       logr.Logger
+	args      *api.ViewArgs
+	mu        sync.RWMutex
+	stores    map[schema.GroupVersionKind]*store.InMemResourceStore
+	eventSink api.EventSink
 }
 
-func New(log logr.Logger, kubeConfigPath string, scheme *runtime.Scheme, watchQueueSize int, watchQueueTimeout time.Duration) (api.View, error) {
+func (b *baseView) GetName() string {
+	return b.args.Name
+}
+
+func New(log logr.Logger, args *api.ViewArgs) (api.View, error) {
 	stores := map[schema.GroupVersionKind]*store.InMemResourceStore{}
 	for _, d := range typeinfo.SupportedDescriptors {
-		stores[d.GVK] = store.NewInMemResourceStore(d.GVK, d.ListGVK, d.GVR.GroupResource().Resource, watchQueueSize, watchQueueTimeout, typeinfo.SupportedScheme, log)
+		stores[d.GVK] = store.NewInMemResourceStore(log, &api.ResourceStoreArgs{
+			Name:          d.GVR.Resource,
+			ObjectGVK:     d.GVK,
+			ObjectListGVK: d.ListGVK,
+			Scheme:        typeinfo.SupportedScheme,
+			WatchConfig:   args.WatchConfig,
+		})
+		//stores[d.GVK] = store.NewInMemResourceStore(d.GVK, d.ListGVK, d.GVR.GroupResource().Resource, args.WatchConfig.QueueSize, args.WatchConfig.Timeout, typeinfo.SupportedScheme, log)
 	}
 	eventSink := eventsink.New(log)
-	return &baseObjectView{
-		log:               log,
-		kubeConfigPath:    kubeConfigPath,
-		scheme:            scheme,
-		stores:            stores,
-		eventSink:         eventSink,
-		watchQueueTimeout: watchQueueTimeout,
+	return &baseView{
+		log:       log,
+		args:      args,
+		stores:    stores,
+		eventSink: eventSink,
 	}, nil
 }
 
-func (b *baseObjectView) GetClientFacades() (clientFacades *api.ClientFacades, err error) {
+func (b *baseView) GetClientFacades() (clientFacades *api.ClientFacades, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("%w: %w", api.ErrClientFacadesFailed, err)
 		}
 	}()
-	client, dynClient, err := clientutil.BuildClients(b.kubeConfigPath) //TODO: Make in-mem clients here.
+	client, dynClient, err := clientutil.BuildClients(b.args.KubeConfigPath) //TODO: Make in-mem clients here.
 	if err != nil {
 		return
 	}
-	informerFactory, dynInformerFactory := clientutil.BuildInformerFactories(client, dynClient, b.watchQueueTimeout)
+	informerFactory, dynInformerFactory := clientutil.BuildInformerFactories(client, dynClient, b.args.WatchConfig.Timeout)
 	clientFacades = &api.ClientFacades{
 		Client:             client,
 		DynClient:          dynClient,
@@ -78,11 +85,11 @@ func (b *baseObjectView) GetClientFacades() (clientFacades *api.ClientFacades, e
 	return
 }
 
-func (b *baseObjectView) GetEventSink() api.EventSink {
+func (b *baseView) GetEventSink() api.EventSink {
 	return b.eventSink
 }
 
-func (b *baseObjectView) GetResourceStore(gvk schema.GroupVersionKind) (api.ResourceStore, error) {
+func (b *baseView) GetResourceStore(gvk schema.GroupVersionKind) (api.ResourceStore, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	s, exists := b.stores[gvk]
@@ -92,7 +99,7 @@ func (b *baseObjectView) GetResourceStore(gvk schema.GroupVersionKind) (api.Reso
 	return s, nil
 }
 
-func (b *baseObjectView) GetObject(gvk schema.GroupVersionKind, fullName cache.ObjectName) (obj runtime.Object, err error) {
+func (b *baseView) GetObject(gvk schema.GroupVersionKind, fullName cache.ObjectName) (obj runtime.Object, err error) {
 	s, err := b.GetResourceStore(gvk)
 	if err != nil {
 		return
@@ -102,7 +109,7 @@ func (b *baseObjectView) GetObject(gvk schema.GroupVersionKind, fullName cache.O
 	return
 }
 
-func (b *baseObjectView) StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
+func (b *baseView) StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
 	s, err := b.GetResourceStore(gvk)
 	if err != nil {
 		return err
@@ -137,7 +144,7 @@ func (b *baseObjectView) StoreObject(gvk schema.GroupVersionKind, obj metav1.Obj
 	return nil
 }
 
-func (b *baseObjectView) UpdateObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
+func (b *baseView) UpdateObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
 	s, err := b.GetResourceStore(gvk)
 	if err != nil {
 		return err
@@ -145,7 +152,7 @@ func (b *baseObjectView) UpdateObject(gvk schema.GroupVersionKind, obj metav1.Ob
 	return s.Update(obj)
 }
 
-func (b *baseObjectView) UpdatePodNodeBinding(podName cache.ObjectName, binding corev1.Binding) (*corev1.Pod, error) {
+func (b *baseView) UpdatePodNodeBinding(podName cache.ObjectName, binding corev1.Binding) (*corev1.Pod, error) {
 	gvk := typeinfo.PodsDescriptor.GVK
 	obj, err := b.GetObject(gvk, podName)
 	if err != nil {
@@ -164,7 +171,7 @@ func (b *baseObjectView) UpdatePodNodeBinding(podName cache.ObjectName, binding 
 	return pod, nil
 }
 
-func (b *baseObjectView) PatchObject(gvk schema.GroupVersionKind, objName cache.ObjectName, patchType types.PatchType, patchData []byte) (patchedObj runtime.Object, err error) {
+func (b *baseView) PatchObject(gvk schema.GroupVersionKind, objName cache.ObjectName, patchType types.PatchType, patchData []byte) (patchedObj runtime.Object, err error) {
 	obj, err := b.GetObject(gvk, objName)
 	if err != nil {
 		return
@@ -187,7 +194,7 @@ func (b *baseObjectView) PatchObject(gvk schema.GroupVersionKind, objName cache.
 	return
 }
 
-func (b *baseObjectView) PatchObjectStatus(gvk schema.GroupVersionKind, objName cache.ObjectName, patchType types.PatchType, patchData []byte) (patchedObj runtime.Object, err error) {
+func (b *baseView) PatchObjectStatus(gvk schema.GroupVersionKind, objName cache.ObjectName, patchData []byte) (patchedObj runtime.Object, err error) {
 	obj, err := b.GetObject(gvk, objName)
 	if err != nil {
 		return
@@ -210,7 +217,7 @@ func (b *baseObjectView) PatchObjectStatus(gvk schema.GroupVersionKind, objName 
 	return
 }
 
-func (b *baseObjectView) ListObjects(gvk schema.GroupVersionKind, criteria api.MatchCriteria) (runtime.Object, error) {
+func (b *baseView) ListObjects(gvk schema.GroupVersionKind, criteria api.MatchCriteria) (runtime.Object, error) {
 	s, err := b.GetResourceStore(gvk)
 	if err != nil {
 		return nil, err
@@ -222,7 +229,7 @@ func (b *baseObjectView) ListObjects(gvk schema.GroupVersionKind, criteria api.M
 	return listObj, nil
 }
 
-func (b *baseObjectView) WatchObjects(ctx context.Context, gvk schema.GroupVersionKind, startVersion int64, namespace string, labelSelector labels.Selector, eventCallback api.WatchEventCallback) error {
+func (b *baseView) WatchObjects(ctx context.Context, gvk schema.GroupVersionKind, startVersion int64, namespace string, labelSelector labels.Selector, eventCallback api.WatchEventCallback) error {
 	s, err := b.GetResourceStore(gvk)
 	if err != nil {
 		return err
@@ -230,7 +237,7 @@ func (b *baseObjectView) WatchObjects(ctx context.Context, gvk schema.GroupVersi
 	return s.Watch(ctx, startVersion, namespace, labelSelector, eventCallback)
 }
 
-func (b *baseObjectView) DeleteObject(gvk schema.GroupVersionKind, fullName cache.ObjectName) error {
+func (b *baseView) DeleteObject(gvk schema.GroupVersionKind, fullName cache.ObjectName) error {
 	s, err := b.GetResourceStore(gvk)
 	if err != nil {
 		return err
@@ -238,7 +245,7 @@ func (b *baseObjectView) DeleteObject(gvk schema.GroupVersionKind, fullName cach
 	return s.Delete(fullName.String())
 }
 
-func (b *baseObjectView) DeleteObjects(gvk schema.GroupVersionKind, criteria api.MatchCriteria) error {
+func (b *baseView) DeleteObjects(gvk schema.GroupVersionKind, criteria api.MatchCriteria) error {
 	s, err := b.GetResourceStore(gvk)
 	if err != nil {
 		return err
@@ -246,7 +253,7 @@ func (b *baseObjectView) DeleteObjects(gvk schema.GroupVersionKind, criteria api
 	return s.DeleteObjects(criteria)
 }
 
-func (b *baseObjectView) ListNodes(matchingNodeNames ...string) ([]*corev1.Node, error) {
+func (b *baseView) ListNodes(matchingNodeNames ...string) ([]*corev1.Node, error) {
 	nodeNamesSet := sets.New(matchingNodeNames...)
 	c := api.MatchCriteria{
 		Names: nodeNamesSet,
@@ -267,7 +274,7 @@ func (b *baseObjectView) ListNodes(matchingNodeNames ...string) ([]*corev1.Node,
 	return nodes, nil
 }
 
-func (b *baseObjectView) ListPods(namespace string, matchingPodNames ...string) ([]*corev1.Pod, error) {
+func (b *baseView) ListPods(namespace string, matchingPodNames ...string) ([]*corev1.Pod, error) {
 	if len(strings.TrimSpace(namespace)) == 0 {
 		return nil, apierrors.NewBadRequest("cannot list pods without namespace")
 	}
@@ -292,7 +299,7 @@ func (b *baseObjectView) ListPods(namespace string, matchingPodNames ...string) 
 	return pods, nil
 }
 
-func (b *baseObjectView) ListEvents(namespace string) ([]*eventsv1.Event, error) {
+func (b *baseView) ListEvents(namespace string) ([]*eventsv1.Event, error) {
 	if len(strings.TrimSpace(namespace)) == 0 {
 		return nil, apierrors.NewBadRequest("cannot list events without namespace")
 	}
@@ -315,11 +322,11 @@ func (b *baseObjectView) ListEvents(namespace string) ([]*eventsv1.Event, error)
 	return events, nil
 }
 
-func (b *baseObjectView) GetKubeConfigPath() string {
-	return b.kubeConfigPath
+func (b *baseView) GetKubeConfigPath() string {
+	return b.args.KubeConfigPath
 }
 
-func (b *baseObjectView) Close() {
+func (b *baseView) Close() {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for _, s := range b.stores {

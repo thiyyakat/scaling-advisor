@@ -562,9 +562,16 @@ func TestWatch(t *testing.T) {
 
 func createStoreForTesting(d typeinfo.Descriptor) *InMemResourceStore {
 	queueSize := 100
-	watchTimeout := time.Duration(2 * time.Second)
+	watchTimeout := 2 * time.Second
 	log := klog.NewKlogr().V(4)
-	return NewInMemResourceStore(d.GVK, d.ListGVK, d.GVR.GroupResource().Resource, queueSize, watchTimeout, typeinfo.SupportedScheme, log)
+
+	return NewInMemResourceStore(log, &api.ResourceStoreArgs{
+		Name:          d.GVR.Resource,
+		ObjectGVK:     d.GVK,
+		ObjectListGVK: d.ListGVK,
+		Scheme:        typeinfo.SupportedScheme,
+		WatchConfig:   api.WatchConfig{QueueSize: queueSize, Timeout: watchTimeout},
+	})
 }
 
 func createPodsForTesting(t *testing.T, s *InMemResourceStore) ([]corev1.Pod, error) {

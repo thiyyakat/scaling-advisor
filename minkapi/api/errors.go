@@ -24,4 +24,6 @@ var (
 	ErrCreateObject          = errors.New("cannot create object")
 	ErrDeleteObject          = errors.New("cannot delete object")
 	ErrListObjects           = errors.New("cannot list objects")
+
+	ErrCreateSandbox = errors.New("cannot create sandbox")
 )

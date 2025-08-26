@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
+	"path/filepath"
 	"reflect"
 	rt "runtime"
 	"strconv"
@@ -51,6 +53,7 @@ type InMemoryKAPI struct {
 	server       *http.Server
 	baseView     api.View
 	log          logr.Logger
+	sandboxViews map[string]api.View
 }
 
 func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err error) {
@@ -61,7 +64,12 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 	}()
 	setMinKAPIConfigDefaults(&cfg)
 	scheme := typeinfo.SupportedScheme
-	baseView, err := view.New(log, cfg.KubeConfigPath, scheme, cfg.WatchQueueSize, cfg.WatchTimeout)
+	baseView, err := view.New(log, &api.ViewArgs{
+		Name:           api.DefaultBasePrefix,
+		KubeConfigPath: cfg.KubeConfigPath,
+		Scheme:         scheme,
+		WatchConfig:    cfg.WatchConfig,
+	})
 	if err != nil {
 		return
 	}
@@ -77,12 +85,16 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 		log:      log,
 	}
 	baseViewMux := http.NewServeMux()
-	s.registerRoutes(baseViewMux, cfg.BasePrefix)
+	s.registerRoutes(baseViewMux, baseView)
+	// DO NOT REMOVE: Single route registration crap needed for kubectl compatability as it ignores server path prefixes
+	// and always makes a call to http://localhost:8084/api/v1/?timeout=32s
+	rootMux.HandleFunc("GET /api/v1/", s.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 	k = s
 
 	// Wrap the entire mux with the logger middleware
 	serverHandler := webutil.LoggerMiddleware(log, rootMux)
 	s.server.Handler = serverHandler
+
 	return
 }
 
@@ -137,16 +149,49 @@ func (k *InMemoryKAPI) GetBaseView() api.View {
 	return k.baseView
 }
 
-func (k *InMemoryKAPI) GetSandboxView(pathPrefix string) (api.View, error) {
-	// TODO replace with SchedulerView
-	return view.New(k.log, k.cfg.KubeConfigPath, k.scheme, k.cfg.WatchQueueSize, k.cfg.WatchTimeout)
+func (k *InMemoryKAPI) GetSandboxView(name string) (api.View, error) {
+	sandboxView, ok := k.sandboxViews[name]
+	if ok {
+		return sandboxView, nil
+	}
+	log := k.log.WithValues("sandboxName", name)
+	kapiURL := fmt.Sprintf("http://%s:%d/%s", k.cfg.Host, k.cfg.Port, name)
+	_, err := url.Parse(kapiURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid sandbox-kapi URI for view %q: %w", api.ErrCreateSandbox, name, err)
+	}
+	baseKubeConfigDir := filepath.Dir(k.cfg.KubeConfigPath)
+	kubeConfigPath := filepath.Join(baseKubeConfigDir, name)
+	err = configtmpl.GenKubeConfig(configtmpl.KubeConfigParams{
+		KubeConfigPath: kubeConfigPath,
+		URL:            kapiURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot generate kubeconfig for view %q: %w", api.ErrCreateSandbox, name, err)
+	}
+	log.Info("sandbox kubeconfig generated", "path", k.cfg.KubeConfigPath)
+
+	sandboxView, err = view.NewSandbox(log, k.baseView, &api.ViewArgs{
+		Name:           name,
+		KubeConfigPath: kubeConfigPath,
+		Scheme:         k.scheme,
+		WatchConfig:    k.cfg.WatchConfig,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot create sandbox view for view %q: %w", api.ErrCreateSandbox, name, err)
+	}
+	sandboxViewMux := http.NewServeMux()
+	k.registerRoutes(sandboxViewMux, sandboxView)
+	k.sandboxViews[name] = sandboxView
+	return sandboxView, nil
 }
 
 func (k *InMemoryKAPI) GetMux() *http.ServeMux {
 	return k.rootMux
 }
 
-func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, pathPrefix string) {
+func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, view api.View) {
+	// TODO: Design: Discuss this since this is not necessary when running as operator since operator has its own profiling enablement.
 	if k.cfg.ProfilingEnabled {
 		k.log.Info("profiling enabled - registering /debug/pprof/* handlers")
 		viewMux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -168,13 +213,11 @@ func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, pathPrefix string)
 	k.registerAPIGroups(viewMux)
 
 	for _, d := range typeinfo.SupportedDescriptors {
-		k.registerResourceRoutes(viewMux, d, k.baseView)
+		k.registerResourceRoutes(viewMux, d, view)
 	}
 	// Register the view's mux under the pathPrefix, stripping the pathPrefix
-	k.rootMux.Handle("/"+pathPrefix+"/", http.StripPrefix("/"+pathPrefix, viewMux))
+	k.rootMux.Handle("/"+view.GetName()+"/", http.StripPrefix("/"+view.GetName(), viewMux))
 
-	// DO NOT REMOVE: Crap needed for kubectl compatability as it ignores base paths and always makes a call to http://localhost:8084/api/v1/?timeout=32s
-	k.rootMux.HandleFunc("GET /api/v1/", k.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 }
 
 func (k *InMemoryKAPI) registerAPIGroups(viewMux *http.ServeMux) {
@@ -264,6 +307,37 @@ func handleGet(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 			return
 		}
 		writeJsonResponse(w, r, obj)
+	}
+}
+
+func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var (
+			mo  metav1.Object
+			err error
+		)
+		mo, err = d.CreateObject()
+		if err != nil {
+			err = fmt.Errorf("cannot create object from objGvk %q: %v", d.GVK, err)
+			handleInternalServerError(w, r, err)
+			return
+		}
+
+		if !readBodyIntoObj(w, r, mo) {
+			return
+		}
+
+		var namespace string
+		if mo.GetNamespace() == "" {
+			namespace = GetObjectName(r, d).Namespace
+			mo.SetNamespace(namespace)
+		}
+		err = view.StoreObject(d.GVK, mo)
+		if err != nil {
+			handleError(w, r, err)
+			return
+		}
+		writeJsonResponse(w, r, mo)
 	}
 }
 
@@ -398,7 +472,7 @@ func handlePatchStatus(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 			return
 		}
 
-		patchedObj, err := view.PatchObjectStatus(d.GVK, objName, types.PatchType(contentType), patchData)
+		patchedObj, err := view.PatchObjectStatus(d.GVK, objName, patchData)
 		if err != nil {
 			handleError(w, r, err)
 			return
@@ -496,37 +570,6 @@ func handleCreatePodBinding(view api.View) http.HandlerFunc {
 func writeStatusError(w http.ResponseWriter, r *http.Request, statusError *apierrors.StatusError) {
 	w.WriteHeader(int(statusError.ErrStatus.Code))
 	writeJsonResponse(w, r, statusError.ErrStatus)
-}
-
-func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var (
-			mo  metav1.Object
-			err error
-		)
-		mo, err = d.CreateObject()
-		if err != nil {
-			err = fmt.Errorf("cannot create object from objGvk %q: %v", d.GVK, err)
-			handleInternalServerError(w, r, err)
-			return
-		}
-
-		if !readBodyIntoObj(w, r, mo) {
-			return
-		}
-
-		var namespace string
-		if mo.GetNamespace() == "" {
-			namespace = GetObjectName(r, d).Namespace
-			mo.SetNamespace(namespace)
-		}
-		err = view.StoreObject(d.GVK, mo)
-		if err != nil {
-			handleError(w, r, err)
-			return
-		}
-		writeJsonResponse(w, r, mo)
-	}
 }
 
 func readBodyIntoObj(w http.ResponseWriter, r *http.Request, obj any) (ok bool) {
@@ -655,11 +698,11 @@ func patchStatus(objPtr runtime.Object, key string, patch []byte) error {
 }
 
 func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
-	if cfg.WatchQueueSize <= 0 {
-		cfg.WatchQueueSize = api.DefaultWatchQueueSize
+	if cfg.WatchConfig.QueueSize <= 0 {
+		cfg.WatchConfig.QueueSize = api.DefaultWatchQueueSize
 	}
-	if cfg.WatchTimeout <= 0 {
-		cfg.WatchTimeout = api.DefaultWatchTimeout
+	if cfg.WatchConfig.Timeout <= 0 {
+		cfg.WatchConfig.Timeout = api.DefaultWatchTimeout
 	}
 	if cfg.KubeConfigPath == "" {
 		cfg.KubeConfigPath = api.DefaultKubeConfigPath
