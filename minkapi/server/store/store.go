@@ -144,7 +144,7 @@ func (s *InMemResourceStore) List(c api.MatchCriteria) (listObj runtime.Object, 
 	items := s.delegate.List()
 	currVersionStr := fmt.Sprintf("%d", s.CurrentResourceVersion())
 	typesMap := typeinfo.SupportedScheme.KnownTypes(s.args.ObjectGVK.GroupVersion())
-	listType, ok := typesMap[s.args.ObjectGVK.Kind]
+	listType, ok := typesMap[s.args.ObjectListGVK.Kind]
 	if !ok {
 		return nil, runtime.NewNotRegisteredErrForKind(typeinfo.SupportedScheme.Name(), s.args.ObjectListGVK)
 	}
