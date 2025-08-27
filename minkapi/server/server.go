@@ -52,17 +52,11 @@ type InMemoryKAPI struct {
 	rootMux      *http.ServeMux
 	server       *http.Server
 	baseView     api.View
-	log          logr.Logger
 	sandboxViews map[string]api.View
 }
 
-func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err error) {
-	defer func() {
-		if err != nil {
-			err = fmt.Errorf("%w: %w", api.ErrInitFailed, err)
-		}
-	}()
-	setMinKAPIConfigDefaults(&cfg)
+// NewInMemory constructs a KAPI server with default base view.
+func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, error) {
 	scheme := typeinfo.SupportedScheme
 	baseView, err := view.New(log, &api.ViewArgs{
 		Name:           api.DefaultBasePrefix,
@@ -71,8 +65,20 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 		WatchConfig:    cfg.WatchConfig,
 	})
 	if err != nil {
-		return
+		return nil, err
 	}
+	return NewInMemoryWithBaseView(cfg, baseView)
+}
+
+// NewInMemoryWithBaseView constructs a KAPI server using the given base repository view.
+func NewInMemoryWithBaseView(cfg api.MinKAPIConfig, baseView api.View) (k api.Server, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: %w", api.ErrInitFailed, err)
+		}
+	}()
+	setMinKAPIConfigDefaults(&cfg)
+	scheme := typeinfo.SupportedScheme
 	rootMux := http.NewServeMux()
 	s := &InMemoryKAPI{
 		cfg:     cfg,
@@ -82,28 +88,26 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 			Addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		},
 		baseView: baseView,
-		log:      log,
 	}
-	baseViewMux := http.NewServeMux()
-	s.registerRoutes(baseViewMux, baseView)
 	// DO NOT REMOVE: Single route registration crap needed for kubectl compatability as it ignores server path prefixes
 	// and always makes a call to http://localhost:8084/api/v1/?timeout=32s
 	rootMux.HandleFunc("GET /api/v1/", s.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 	k = s
-
-	// Wrap the entire mux with the logger middleware
-	serverHandler := webutil.LoggerMiddleware(log, rootMux)
-	s.server.Handler = serverHandler
-
 	return
+
 }
 
-// Start begins the HTTP server
+// Start begins the MinKAPI server
 func (k *InMemoryKAPI) Start(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
 	k.server.BaseContext = func(_ net.Listener) context.Context {
 		return ctx
 	}
+	baseViewMux := http.NewServeMux()
+	k.registerRoutes(log, baseViewMux, k.baseView)
+	// Wrap the entire mux with the logger middleware
+	serverHandler := webutil.LoggerMiddleware(log, k.rootMux)
+	k.server.Handler = serverHandler
 	// We do this because we want the bind address
 	listener, err := net.Listen("tcp", k.server.Addr)
 	if err != nil {
@@ -131,14 +135,14 @@ func (k *InMemoryKAPI) Start(ctx context.Context) error {
 		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
 	}
 	log.Info("sample kube-scheduler-config generated", "path", schedulerTmplParams.KubeSchedulerConfigPath)
-	k.log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr, "kapiURL", kapiURL)
+	log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr, "kapiURL", kapiURL)
 	if err := k.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("%w: %w", api.ErrServiceFailed, err)
 	}
 	return nil
 }
 
-// Stop  shuts down the HTTP server and closes resources
+// Stop shuts down the HTTP server and closes resources
 func (k *InMemoryKAPI) Stop(ctx context.Context) (err error) {
 	err = k.server.Shutdown(ctx) // shutdown server first to avoid accepting new requests.
 	k.baseView.Close()
@@ -149,12 +153,12 @@ func (k *InMemoryKAPI) GetBaseView() api.View {
 	return k.baseView
 }
 
-func (k *InMemoryKAPI) GetSandboxView(name string) (api.View, error) {
+func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.View, error) {
+	log := logr.FromContextOrDiscard(ctx).WithValues("sandboxName", name)
 	sandboxView, ok := k.sandboxViews[name]
 	if ok {
 		return sandboxView, nil
 	}
-	log := k.log.WithValues("sandboxName", name)
 	kapiURL := fmt.Sprintf("http://%s:%d/%s", k.cfg.Host, k.cfg.Port, name)
 	_, err := url.Parse(kapiURL)
 	if err != nil {
@@ -181,19 +185,15 @@ func (k *InMemoryKAPI) GetSandboxView(name string) (api.View, error) {
 		return nil, fmt.Errorf("%w: cannot create sandbox view for view %q: %w", api.ErrCreateSandbox, name, err)
 	}
 	sandboxViewMux := http.NewServeMux()
-	k.registerRoutes(sandboxViewMux, sandboxView)
+	k.registerRoutes(log, sandboxViewMux, sandboxView)
 	k.sandboxViews[name] = sandboxView
 	return sandboxView, nil
 }
 
-func (k *InMemoryKAPI) GetMux() *http.ServeMux {
-	return k.rootMux
-}
-
-func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, view api.View) {
+func (k *InMemoryKAPI) registerRoutes(log logr.Logger, viewMux *http.ServeMux, view api.View) {
 	// TODO: Design: Discuss this since this is not necessary when running as operator since operator has its own profiling enablement.
 	if k.cfg.ProfilingEnabled {
-		k.log.Info("profiling enabled - registering /debug/pprof/* handlers")
+		log.Info("profiling enabled - registering /debug/pprof/* handlers")
 		viewMux.HandleFunc("/debug/pprof/", pprof.Index)
 		viewMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		viewMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
