@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"k8s.io/apimachinery/pkg/types"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -17,8 +18,6 @@ import (
 	"path/filepath"
 	rt "runtime"
 	"strconv"
-
-	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/gardener/scaling-advisor/common/webutil"
 	"github.com/gardener/scaling-advisor/minkapi/server/view"
@@ -45,17 +44,18 @@ var _ api.Server = (*InMemoryKAPI)(nil)
 
 // InMemoryKAPI holds the in-memory stores, watch channels, and version tracking for simple implementation of api.APIServer
 type InMemoryKAPI struct {
-	cfg          api.MinKAPIConfig
-	listenerAddr net.Addr
-	scheme       *runtime.Scheme
-	rootMux      *http.ServeMux
-	server       *http.Server
-	baseView     api.View
-	sandboxViews map[string]api.View
+	cfg                 api.MinKAPIConfig
+	listenerAddr        net.Addr
+	scheme              *runtime.Scheme
+	rootMux             *http.ServeMux
+	server              *http.Server
+	baseView            api.View
+	createSandboxViewFn api.CreateSandboxViewFunc
+	sandboxViews        map[string]api.View
 }
 
-// NewInMemory constructs a KAPI server with default base view.
-func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, error) {
+// NewDefaultInMemory constructs a KAPI server with default implementations of sub-components.
+func NewDefaultInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, error) {
 	scheme := typeinfo.SupportedScheme
 	baseView, err := view.New(log, &api.ViewArgs{
 		Name:           api.DefaultBasePrefix,
@@ -66,11 +66,11 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewInMemoryWithBaseView(cfg, baseView)
+	return NewInMemoryUsingViews(cfg, baseView, view.NewSandboxView)
 }
 
-// NewInMemoryWithBaseView constructs a KAPI server using the given base repository view.
-func NewInMemoryWithBaseView(cfg api.MinKAPIConfig, baseView api.View) (k api.Server, err error) {
+// NewInMemoryUsingViews constructs a KAPI server with the given base view and the sandbox view creation function.
+func NewInMemoryUsingViews(cfg api.MinKAPIConfig, baseView api.View, sandboxViewCreateFn api.CreateSandboxViewFunc) (k api.Server, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("%w: %w", api.ErrInitFailed, err)
@@ -86,14 +86,14 @@ func NewInMemoryWithBaseView(cfg api.MinKAPIConfig, baseView api.View) (k api.Se
 		server: &http.Server{
 			Addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		},
-		baseView: baseView,
+		baseView:            baseView,
+		createSandboxViewFn: sandboxViewCreateFn,
 	}
 	// DO NOT REMOVE: Single route registration crap needed for kubectl compatability as it ignores server path prefixes
 	// and always makes a call to http://localhost:8084/api/v1/?timeout=32s
 	rootMux.HandleFunc("GET /api/v1/", s.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 	k = s
 	return
-
 }
 
 // Start begins the MinKAPI server
@@ -154,7 +154,7 @@ func (k *InMemoryKAPI) GetBaseView() api.View {
 
 func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.View, error) {
 	log := logr.FromContextOrDiscard(ctx).WithValues("sandboxName", name)
-	sandboxView, ok := k.sandboxViews[name]
+	sandboxView, ok := k.sandboxViews[name] // TODO: protected with mutex.
 	if ok {
 		return sandboxView, nil
 	}
@@ -174,7 +174,7 @@ func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.Vie
 	}
 	log.Info("sandbox kubeconfig generated", "path", k.cfg.KubeConfigPath)
 
-	sandboxView, err = view.NewSandbox(log, k.baseView, &api.ViewArgs{
+	sandboxView, err = k.createSandboxViewFn(log, k.baseView, &api.ViewArgs{
 		Name:           name,
 		KubeConfigPath: kubeConfigPath,
 		Scheme:         k.scheme,

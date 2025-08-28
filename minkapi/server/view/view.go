@@ -3,6 +3,8 @@ package view
 import (
 	"context"
 	"fmt"
+	commontypes "github.com/gardener/scaling-advisor/api/common/types"
+	"github.com/gardener/scaling-advisor/common/clientutil"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +21,6 @@ import (
 	"github.com/gardener/scaling-advisor/minkapi/server/store"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 
-	"github.com/gardener/scaling-advisor/common/clientutil"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -31,7 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
-var _ api.View = (*baseView)(nil)
+var (
+	_ api.View                  = (*baseView)(nil)
+	_ api.CreateSandboxViewFunc = NewSandboxView
+)
 
 type baseView struct {
 	log       logr.Logger
@@ -41,8 +45,8 @@ type baseView struct {
 	eventSink api.EventSink
 }
 
-func (b *baseView) GetName() string {
-	return b.args.Name
+func NewSandboxView(log logr.Logger, baseView api.View, args *api.ViewArgs) (api.View, error) {
+	return NewSandbox(log, baseView, args)
 }
 
 func New(log logr.Logger, args *api.ViewArgs) (api.View, error) {
@@ -66,22 +70,25 @@ func New(log logr.Logger, args *api.ViewArgs) (api.View, error) {
 	}, nil
 }
 
-func (b *baseView) GetClientFacades() (clientFacades *api.ClientFacades, err error) {
+func (b *baseView) GetName() string {
+	return b.args.Name
+}
+
+func (b *baseView) GetType() api.ViewType {
+	return api.BaseViewType
+}
+
+func (b *baseView) GetClientFacades(clientType api.ClientType) (clientFacades *commontypes.ClientFacades, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("%w: %w", api.ErrClientFacadesFailed, err)
 		}
 	}()
-	client, dynClient, err := clientutil.BuildClients(b.args.KubeConfigPath) //TODO: Make in-mem clients here.
-	if err != nil {
+	if clientType == api.NetworkClient {
+		clientFacades, err = clientutil.CreateNetworkClientFacades(b.args.KubeConfigPath, b.args.WatchConfig.Timeout)
 		return
-	}
-	informerFactory, dynInformerFactory := clientutil.BuildInformerFactories(client, dynClient, b.args.WatchConfig.Timeout)
-	clientFacades = &api.ClientFacades{
-		Client:             client,
-		DynClient:          dynClient,
-		InformerFactory:    informerFactory,
-		DynInformerFactory: dynInformerFactory,
+	} else {
+		panic("inmem client type to be implemented")
 	}
 	return
 }

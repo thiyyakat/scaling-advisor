@@ -753,10 +753,9 @@ func startMinkapiService(t *testing.T) (*InMemoryKAPI, *http.ServeMux, error) { 
 			Handler: rootMux,
 		},
 		baseView: baseView,
-		log:      log,
 	}
 	baseViewMux := http.NewServeMux()
-	s.registerRoutes(baseViewMux, baseView)
+	s.registerRoutes(log, baseViewMux, baseView)
 	return s, baseViewMux, err
 }
 

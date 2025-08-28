@@ -42,7 +42,7 @@ func (d *defaultScalingAdvisor) Start(ctx context.Context) (err error) {
 		}
 	}()
 	log := logr.FromContextOrDiscard(ctx)
-	d.minKAPIServer, err = mkcore.NewInMemory(log, d.minKAPIConfig)
+	d.minKAPIServer, err = mkcore.NewDefaultInMemory(log, d.minKAPIConfig)
 	if err != nil {
 		return
 	}

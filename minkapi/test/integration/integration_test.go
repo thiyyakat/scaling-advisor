@@ -61,7 +61,7 @@ func TestMain(m *testing.M) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	state.apiServer, err = server.NewInMemory(log, mainOpts.MinKAPIConfig)
+	state.apiServer, err = server.NewDefaultInMemory(log, mainOpts.MinKAPIConfig)
 	if err != nil {
 		log.Error(err, "failed to initialize InMemoryKAPI")
 		return

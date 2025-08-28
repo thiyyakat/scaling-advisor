@@ -132,7 +132,7 @@ func (s *defaultSimulation) getScaledNodeAssignment() *api.NodePodAssignment {
 }
 
 func (s *defaultSimulation) launchSchedulerForSimulation(ctx context.Context, simView mkapi.View) (api.SchedulerHandle, error) {
-	clientFacades, err := simView.GetClientFacades()
+	clientFacades, err := simView.GetNetworkClientFacades()
 	if err != nil {
 		return nil, err
 	}

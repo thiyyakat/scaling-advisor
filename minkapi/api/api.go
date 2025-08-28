@@ -6,6 +6,7 @@ package api
 
 import (
 	"context"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/cache"
 	"time"
@@ -19,10 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/dynamicinformer"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/events"
 )
 
@@ -78,6 +75,7 @@ type ResourceStoreArgs struct {
 	// Scheme is the runtime Scheme used by the KAPI objects storable in this store.
 	Scheme      *runtime.Scheme
 	WatchConfig WatchConfig
+	Log         logr.Logger
 }
 
 type EventSink interface {
@@ -86,18 +84,19 @@ type EventSink interface {
 	Reset()
 }
 
-type ClientFacades struct {
-	Client             kubernetes.Interface
-	DynClient          dynamic.Interface
-	InformerFactory    informers.SharedInformerFactory
-	DynInformerFactory dynamicinformer.DynamicSharedInformerFactory
-}
+type ClientType string
+
+const (
+	NetworkClient ClientType = "NetworkClient"
+	InMemClient   ClientType = "InMemClient"
+)
 
 // View is the high-level facade to a repository of objects of different types (GVK).
-// TODO: Think of a better name. Rename this to Repository or RepoView, also add godoc ?
+// TODO: Think of a better name. Rename this to ObjectRepository or something else, also add godoc ?
 type View interface {
 	GetName() string
-	GetClientFacades() (*ClientFacades, error)
+	GetType() ViewType
+	GetClientFacades(clientType ClientType) (*commontypes.ClientFacades, error)
 	GetResourceStore(gvk schema.GroupVersionKind) (ResourceStore, error)
 	GetEventSink() EventSink
 	StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error
@@ -116,6 +115,16 @@ type View interface {
 	GetKubeConfigPath() string
 	Close()
 }
+
+type ViewType string
+
+const (
+	BaseViewType    ViewType = "base"
+	SandboxViewType ViewType = "sandbox"
+)
+
+// CreateSandboxViewFunc represents a creator function for constructing sandbox views from the delegate view and given args
+type CreateSandboxViewFunc = func(log logr.Logger, delegateView View, args *ViewArgs) (View, error)
 
 type ViewArgs struct {
 	// Name represents name of View
@@ -138,7 +147,7 @@ type Server interface {
 	// in the same directory as the base `minkapi.yaml`.  The sandbox name should be a valid path-prefix, ie no-spaces.
 	//
 	// TODO: discuss whether the above is OK.
-	GetSandboxView(name string) (View, error)
+	GetSandboxView(ctx context.Context, name string) (View, error)
 }
 
 type MatchCriteria struct {

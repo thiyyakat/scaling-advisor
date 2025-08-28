@@ -1,6 +1,7 @@
 package clientutil
 
 import (
+	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -30,5 +31,20 @@ func BuildClients(kubeConfigPath string) (client kubernetes.Interface, dynClient
 func BuildInformerFactories(client kubernetes.Interface, dyncClient dynamic.Interface, resyncPeriod time.Duration) (informerFactory informers.SharedInformerFactory, dynInformerFactory dynamicinformer.DynamicSharedInformerFactory) {
 	informerFactory = informers.NewSharedInformerFactory(client, resyncPeriod)
 	dynInformerFactory = dynamicinformer.NewDynamicSharedInformerFactory(dyncClient, resyncPeriod)
+	return
+}
+
+func CreateNetworkClientFacades(kubeConfigPath string, resyncPeriod time.Duration) (clientFacades *commontypes.ClientFacades, err error) {
+	client, dynClient, err := BuildClients(kubeConfigPath)
+	if err != nil {
+		return
+	}
+	informerFactory, dynInformerFactory := BuildInformerFactories(client, dynClient, resyncPeriod)
+	clientFacades = &commontypes.ClientFacades{
+		Client:             client,
+		DynClient:          dynClient,
+		InformerFactory:    informerFactory,
+		DynInformerFactory: dynInformerFactory,
+	}
 	return
 }

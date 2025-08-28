@@ -2,6 +2,9 @@ package view
 
 import (
 	"context"
+	"fmt"
+	commontypes "github.com/gardener/scaling-advisor/api/common/types"
+	"github.com/gardener/scaling-advisor/common/clientutil"
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/server/eventsink"
 	"github.com/gardener/scaling-advisor/minkapi/server/store"
@@ -57,9 +60,23 @@ func (s *sandboxView) GetName() string {
 	return s.args.Name
 }
 
-func (s *sandboxView) GetClientFacades() (*api.ClientFacades, error) {
-	//TODO implement me
-	panic("implement me")
+func (s *sandboxView) GetType() api.ViewType {
+	return api.SandboxViewType
+}
+
+func (s *sandboxView) GetClientFacades(clientType api.ClientType) (clientFacades *commontypes.ClientFacades, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w: %w", api.ErrClientFacadesFailed, err)
+		}
+	}()
+	if clientType == api.NetworkClient {
+		clientFacades, err = clientutil.CreateNetworkClientFacades(s.args.KubeConfigPath, s.args.WatchConfig.Timeout)
+		return
+	} else {
+		panic("inmem client type to be implemented")
+	}
+	return
 }
 
 func (s *sandboxView) GetResourceStore(gvk schema.GroupVersionKind) (api.ResourceStore, error) {

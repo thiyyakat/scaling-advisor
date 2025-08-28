@@ -7,6 +7,10 @@ package types
 import (
 	"context"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 )
 
 // Service is a component that can be started and stopped.
@@ -62,3 +66,11 @@ const (
 	AliCloudProvider       CloudProvider = "ali"
 	OpenStackCloudProvider CloudProvider = "openstack"
 )
+
+// ClientFacades is a holder for the primary k8s client and informer interfaces
+type ClientFacades struct {
+	Client             kubernetes.Interface
+	DynClient          dynamic.Interface
+	InformerFactory    informers.SharedInformerFactory
+	DynInformerFactory dynamicinformer.DynamicSharedInformerFactory
+}

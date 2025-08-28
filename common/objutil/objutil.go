@@ -28,9 +28,9 @@ import (
 // ToYAML serializes the given k8s runtime.Object to YAML.
 func ToYAML(obj runtime.Object) (string, error) {
 	scheme := runtime.NewScheme()
-	serializer := apijson.NewSerializerWithOptions(apijson.DefaultMetaFactory, scheme, scheme, apijson.SerializerOptions{Yaml: true, Pretty: true})
+	ser := apijson.NewSerializerWithOptions(apijson.DefaultMetaFactory, scheme, scheme, apijson.SerializerOptions{Yaml: true, Pretty: true})
 	var buf bytes.Buffer
-	err := serializer.Encode(obj, &buf)
+	err := ser.Encode(obj, &buf)
 	if err != nil {
 		return "", err
 	}
