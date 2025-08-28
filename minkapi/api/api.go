@@ -84,19 +84,12 @@ type EventSink interface {
 	Reset()
 }
 
-type ClientType string
-
-const (
-	NetworkClient ClientType = "NetworkClient"
-	InMemClient   ClientType = "InMemClient"
-)
-
 // View is the high-level facade to a repository of objects of different types (GVK).
 // TODO: Think of a better name. Rename this to ObjectRepository or something else, also add godoc ?
 type View interface {
 	GetName() string
 	GetType() ViewType
-	GetClientFacades(clientType ClientType) (commontypes.ClientFacades, error)
+	GetClientFacades(clientType commontypes.ClientMode) (commontypes.ClientFacades, error)
 	GetResourceStore(gvk schema.GroupVersionKind) (ResourceStore, error)
 	GetEventSink() EventSink
 	StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error
@@ -148,6 +141,15 @@ type Server interface {
 	//
 	// TODO: discuss whether the above is OK.
 	GetSandboxView(ctx context.Context, name string) (View, error)
+}
+
+// App represents an application that wraps a minkapi Server, an application context and application cancel func.
+//
+// `main` entry-point functions taht embed minkapi are expected to construct a new App instance via cli.LaunchApp and shutdown applications via cli.ShutdownApp
+type App struct {
+	Server Server
+	Ctx    context.Context
+	Cancel context.CancelFunc
 }
 
 type MatchCriteria struct {

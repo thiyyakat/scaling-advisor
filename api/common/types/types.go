@@ -16,6 +16,7 @@ import (
 // Service is a component that can be started and stopped.
 type Service interface {
 	// Start starts the service with the given context. Start may block depending on the implementation - if the service is a server.
+	// The context is expected to be populated with a logger.
 	Start(ctx context.Context) error
 
 	// Stop stops the service. Stop does not block.
@@ -49,7 +50,7 @@ type ConstraintReference struct {
 	Namespace string `json:"namespace"`
 }
 
-// NodeScoringStrategy
+// NodeScoringStrategy represents a node scoring strategy variant.
 type NodeScoringStrategy string
 
 const (
@@ -67,8 +68,17 @@ const (
 	OpenStackCloudProvider CloudProvider = "openstack"
 )
 
+// ClientMode indicates the connection mode of k8s client
+type ClientMode string
+
+const (
+	NetworkClient ClientMode = "Network"
+	InMemClient   ClientMode = "InMemory"
+)
+
 // ClientFacades is a holder for the primary k8s client and informer interfaces
 type ClientFacades struct {
+	Mode               ClientMode
 	Client             kubernetes.Interface
 	DynClient          dynamic.Interface
 	InformerFactory    informers.SharedInformerFactory

@@ -5,19 +5,26 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	commoncli "github.com/gardener/scaling-advisor/common/cli"
+	"github.com/gardener/scaling-advisor/minkapi/cli"
+	"github.com/spf13/pflag"
 	"io"
+	runtimejson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/types"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"os"
 	"path/filepath"
 	rt "runtime"
 	"strconv"
+	"time"
 
 	"github.com/gardener/scaling-advisor/common/webutil"
 	"github.com/gardener/scaling-advisor/minkapi/server/view"
@@ -52,6 +59,61 @@ type InMemoryKAPI struct {
 	baseView            api.View
 	createSandboxViewFn api.CreateSandboxViewFunc
 	sandboxViews        map[string]api.View
+}
+
+// LaunchApp is a helper function used to parse cli args, construct, and start the MinKAPI server.
+//
+// On success, returns an initialized App which holds the minkapi Server, the App Context (which has been setup for SIGINT and SIGTERM cancellation and holds a logger),
+// and the Cancel func which callers are expected to defer in their main routines.
+//
+// On error, it will log the error to standard error and return the exitCode that callers are expected to exit the process with.
+func LaunchApp(ctx context.Context) (app api.App, exitCode int) {
+	app.Ctx, app.Cancel = commoncli.CreateAppContext(ctx)
+	log := logr.FromContextOrDiscard(app.Ctx)
+	commoncli.PrintVersion(api.ProgramName)
+	mainOpts, err := cli.ParseProgramFlags(os.Args[1:])
+	if err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
+		exitCode = commoncli.ExitErrParseOpts
+		return
+	}
+	app.Server, err = NewDefaultInMemory(log, mainOpts.MinKAPIConfig)
+	if err != nil {
+		log.Error(err, "failed to initialize InMemoryKAPI")
+		exitCode = commoncli.ExitErrStart
+		return
+	}
+	// Begin the service in a goroutine
+	go func() {
+		if err := app.Server.Start(app.Ctx); err != nil {
+			if errors.Is(err, api.ErrStartFailed) {
+				log.Error(err, "failed to start service")
+			} else {
+				log.Error(err, fmt.Sprintf("%s start failed", api.ProgramName))
+			}
+		}
+	}()
+	return
+}
+
+func ShutdownApp(app *api.App) (exitCode int) {
+	// Create a context with a 5-second timeout for shutdown
+	shutDownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	log := logr.FromContextOrDiscard(app.Ctx)
+
+	// Perform shutdown
+	if err := app.Server.Stop(shutDownCtx); err != nil {
+		log.Error(err, fmt.Sprintf(" %s shutdown failed", api.ProgramName))
+		exitCode = commoncli.ExitErrShutdown
+		return
+	}
+	log.Info(fmt.Sprintf("%s shutdown gracefully.", api.ProgramName))
+	exitCode = commoncli.ExitSuccess
+	return
 }
 
 // NewDefaultInMemory constructs a KAPI server with default implementations of sub-components.
@@ -496,8 +558,6 @@ func handleWatch(d typeinfo.Descriptor, view api.View, labelSelector labels.Sele
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		//w.Header().Set("Transfer-Encoding", "chunked") // NOTE: Don't do this since without setting Content-Length, the Go HTTP server automatically enables chunked transfer encoding
 		flusher := getFlusher(w)
 		if flusher == nil {
 			return
@@ -510,7 +570,7 @@ func handleWatch(d typeinfo.Descriptor, view api.View, labelSelector labels.Sele
 			if err != nil {
 				return err
 			}
-			eventJson, err := buildWatchEventJson(log, &event)
+			eventJson, err := buildWatchEventJsonAlt(log, &event)
 			if err != nil {
 				err = fmt.Errorf("cannot  encode watch %q event for object name %q, namespace %q, resourceVersion %q: %w",
 					event.Type, metaObj.GetName(), metaObj.GetNamespace(), metaObj.GetResourceVersion(), err)
@@ -641,6 +701,28 @@ func buildWatchEventJson(log logr.Logger, event *watch.Event) (string, error) {
 		return "", err
 	}
 	payload := fmt.Sprintf("{\"type\":\"%s\",\"object\":%s}", event.Type, string(data))
+	return payload, nil
+}
+
+func buildWatchEventJsonAlt(log logr.Logger, ev *watch.Event) (string, error) {
+	sch := typeinfo.SupportedScheme
+	s := runtimejson.NewSerializerWithOptions(
+		runtimejson.DefaultMetaFactory, sch, sch,
+		runtimejson.SerializerOptions{Yaml: false, Pretty: false, Strict: false})
+
+	mev := &metav1.WatchEvent{
+		Type: string(ev.Type),
+		Object: runtime.RawExtension{
+			Object: ev.Object,
+		},
+	}
+	var buf bytes.Buffer
+	err := s.Encode(mev, &buf)
+	if err != nil {
+		log.Error(err, "cannot encode watch event", "event", ev)
+		return "", err
+	}
+	payload := buf.String()
 	return payload, nil
 }
 
