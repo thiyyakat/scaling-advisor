@@ -96,7 +96,7 @@ const (
 type View interface {
 	GetName() string
 	GetType() ViewType
-	GetClientFacades(clientType ClientType) (*commontypes.ClientFacades, error)
+	GetClientFacades(clientType ClientType) (commontypes.ClientFacades, error)
 	GetResourceStore(gvk schema.GroupVersionKind) (ResourceStore, error)
 	GetEventSink() EventSink
 	StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error

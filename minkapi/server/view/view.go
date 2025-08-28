@@ -78,14 +78,14 @@ func (b *baseView) GetType() api.ViewType {
 	return api.BaseViewType
 }
 
-func (b *baseView) GetClientFacades(clientType api.ClientType) (clientFacades *commontypes.ClientFacades, err error) {
+func (b *baseView) GetClientFacades(clientType api.ClientType) (clientFacades commontypes.ClientFacades, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("%w: %w", api.ErrClientFacadesFailed, err)
 		}
 	}()
 	if clientType == api.NetworkClient {
-		clientFacades, err = clientutil.CreateNetworkClientFacades(b.args.KubeConfigPath, b.args.WatchConfig.Timeout)
+		clientFacades, err = clientutil.CreateNetworkClientFacades(b.log, b.args.KubeConfigPath, b.args.WatchConfig.Timeout)
 		return
 	} else {
 		panic("inmem client type to be implemented")
