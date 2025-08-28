@@ -7,14 +7,15 @@ package store
 import (
 	"context"
 	"fmt"
+	"github.com/gardener/scaling-advisor/common/testutil"
 	"reflect"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
-	testutils "github.com/gardener/scaling-advisor/minkapi/test/utils"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -65,7 +66,7 @@ func TestAdd(t *testing.T) {
 			obj1 := metav1.Object(p.DeepCopy())
 			if err := s.Add(obj1); err != nil {
 				assertNumberOfItems(t, s, tc.expectedNumberOfObjects)
-				testutils.AssertError(t, err, tc.retErr)
+				testutil.AssertError(t, err, tc.retErr)
 				return
 			}
 			assertNumberOfItems(t, s, tc.expectedNumberOfObjects)
@@ -133,7 +134,7 @@ func TestUpdate(t *testing.T) {
 			obj1 := metav1.Object(p.DeepCopy())
 			if err := s.Update(obj1); err != nil {
 				assertNumberOfItems(t, s, tc.expectedNumberOfObjects)
-				testutils.AssertError(t, err, tc.retErr)
+				testutil.AssertError(t, err, tc.retErr)
 				return
 			}
 			assertNumberOfItems(t, s, tc.expectedNumberOfObjects)
@@ -211,7 +212,7 @@ func TestDelete(t *testing.T) {
 			gotObj, _ := s.GetByKey(key)
 			if err := s.Delete(key); err != nil {
 				assertNumberOfItems(t, s, tc.expectedNumberOfObjects)
-				testutils.AssertError(t, err, tc.retErr)
+				testutil.AssertError(t, err, tc.retErr)
 				return
 			}
 			assertNumberOfItems(t, s, tc.expectedNumberOfObjects)
@@ -269,7 +270,7 @@ func TestGetByKey(t *testing.T) {
 			if err != nil {
 				if !tc.errorCheckFunc(err) {
 					t.Errorf("Expected error to be %s, got: %v",
-						testutils.GetFunctionName(t, tc.errorCheckFunc), err,
+						testutil.GetFunctionName(t, tc.errorCheckFunc), err,
 					)
 					return
 				}
@@ -317,9 +318,10 @@ func TestList(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			objList, err := s.List(tc.namespace, tc.labelSelector)
+			c := api.MatchCriteria{Namespace: tc.namespace, LabelSelector: tc.labelSelector}
+			objList, err := s.List(c)
 			if err != nil {
-				testutils.AssertError(t, err, tc.retErr)
+				testutil.AssertError(t, err, tc.retErr)
 			}
 			podList, ok := objList.(*corev1.PodList)
 			if !ok {
@@ -405,7 +407,7 @@ func TestBuildPendingWatchEvents(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			watchEvents, err := s.buildPendingWatchEvents(tc.startVersion, tc.namespace, tc.labelSelector)
 			if err != nil {
-				testutils.AssertError(t, err, tc.retErr)
+				testutil.AssertError(t, err, tc.retErr)
 			}
 			if len(watchEvents) != tc.expectedNumberOfObjects {
 				t.Errorf("Expected returned number of objects to be %d, got %d",
@@ -541,7 +543,7 @@ func TestWatch(t *testing.T) {
 			wg.Wait()
 
 			if watchErr != nil && watchErr != context.Canceled {
-				testutils.AssertError(t, watchErr, tc.retErr)
+				testutil.AssertError(t, watchErr, tc.retErr)
 			}
 
 			eventsMutex.Lock()
@@ -560,9 +562,16 @@ func TestWatch(t *testing.T) {
 
 func createStoreForTesting(d typeinfo.Descriptor) *InMemResourceStore {
 	queueSize := 100
-	watchTimeout := time.Duration(2 * time.Second)
+	watchTimeout := 2 * time.Second
 	log := klog.NewKlogr().V(4)
-	return NewInMemResourceStore(d.GVK, d.ListGVK, d.GVR.GroupResource().Resource, queueSize, watchTimeout, typeinfo.SupportedScheme, log)
+
+	return NewInMemResourceStore(log, &api.ResourceStoreArgs{
+		Name:          d.GVR.Resource,
+		ObjectGVK:     d.GVK,
+		ObjectListGVK: d.ListGVK,
+		Scheme:        typeinfo.SupportedScheme,
+		WatchConfig:   api.WatchConfig{QueueSize: queueSize, Timeout: watchTimeout},
+	})
 }
 
 func createPodsForTesting(t *testing.T, s *InMemResourceStore) ([]corev1.Pod, error) {

@@ -1,0 +1,84 @@
+package testutil
+
+import (
+	"embed"
+	"errors"
+	"fmt"
+	corev1 "k8s.io/api/core/v1"
+	"reflect"
+	"runtime"
+	sigyaml "sigs.k8s.io/yaml"
+	"strings"
+	"testing"
+)
+import _ "embed"
+
+//go:embed testdata/*
+var testDataFS embed.FS
+
+func AssertError(t *testing.T, got error, want error) {
+	t.Helper()
+	if isNil(got) && isNil(want) {
+		return
+	}
+	if (isNil(got) && !isNil(want)) || (!isNil(got) && isNil(want)) {
+		t.Errorf("Unexpected error, got: %v, want: %v", got, want)
+		return
+	}
+	if errors.Is(got, want) || strings.Contains(got.Error(), want.Error()) {
+		t.Logf("Expected error: %v", got)
+	} else {
+		t.Errorf("Unexpected error, got: %v, want: %v", got, want)
+	}
+}
+
+// isNil checks if v is nil. (source: https://antonz.org/do-not-testify/)
+func isNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	// A non-nil interface can still hold a nil value, so we must check the underlying value.
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface,
+		reflect.Map, reflect.Pointer, reflect.Slice,
+		reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+func GetFunctionName(t *testing.T, fn any) string {
+	t.Helper()
+	return runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+}
+
+func LoadTestNodes() (nodes []corev1.Node, err error) {
+	var nodeA corev1.Node
+	data, err := testDataFS.ReadFile("testdata/node-a.yaml")
+	if err != nil {
+		return
+	}
+	err = sigyaml.Unmarshal(data, &nodeA)
+	if err != nil {
+		err = fmt.Errorf("failed to unmarshal object node-a data into node obj: %w", err)
+		return
+	}
+	nodes = append(nodes, nodeA)
+	return
+}
+func LoadTestPods() (pods []corev1.Pod, err error) {
+	var podA corev1.Pod
+	data, err := testDataFS.ReadFile("testdata/pod-a.yaml")
+	if err != nil {
+		return
+	}
+	err = sigyaml.Unmarshal(data, &podA)
+	if err != nil {
+		err = fmt.Errorf("failed to unmarshal object pod-a data into pod obj: %w", err)
+		return
+	}
+	pods = append(pods, podA)
+	return
+}

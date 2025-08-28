@@ -11,10 +11,6 @@ import (
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/dynamicinformer"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/events"
 	"time"
 )
@@ -108,14 +104,7 @@ type ScalingAdvisorService interface {
 
 // SchedulerLaunchParams holds the parameters required to launch a kube-scheduler instance.
 type SchedulerLaunchParams struct {
-	// Client is the Kubernetes client used to interact with the cluster.
-	Client kubernetes.Interface
-	// DynClient is the dynamic Kubernetes client used to interact with the cluster.
-	DynClient dynamic.Interface
-	// InformerFactory is the shared informer factory used to create informers for the cluster resources.
-	InformerFactory informers.SharedInformerFactory
-	// DynInformerFactory is the dynamic shared informer factory used to create informers for the cluster resources.
-	DynInformerFactory dynamicinformer.DynamicSharedInformerFactory
+	commontypes.ClientFacades
 	// EventSink is the event sink used to send events from the kube-scheduler.
 	EventSink events.EventSink
 }

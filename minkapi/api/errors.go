@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	ErrInitFailed = errors.New(fmt.Sprintf("%s init failed", ProgramName))
+	ErrInitFailed = fmt.Errorf("%s init failed", ProgramName)
 	// ErrStartFailed is a sentinel error indicating that the service failed to start.
 	ErrStartFailed         = fmt.Errorf("%s start failed", ProgramName)
 	ErrClientFacadesFailed = errors.New("failed to create client facades")
@@ -24,4 +24,6 @@ var (
 	ErrCreateObject          = errors.New("cannot create object")
 	ErrDeleteObject          = errors.New("cannot delete object")
 	ErrListObjects           = errors.New("cannot list objects")
+
+	ErrCreateSandbox = errors.New("cannot create sandbox")
 )

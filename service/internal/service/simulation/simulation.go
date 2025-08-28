@@ -82,7 +82,7 @@ func (s *defaultSimulation) Run(ctx context.Context) (err error) {
 		}
 	}()
 	s.state.simNode = s.buildSimulationNode()
-	err = s.args.View.CreateObject(typeinfo.NodesDescriptor.GVK, s.state.simNode)
+	err = s.args.View.StoreObject(typeinfo.NodesDescriptor.GVK, s.state.simNode)
 	if err != nil {
 		return
 	}
@@ -132,7 +132,7 @@ func (s *defaultSimulation) getScaledNodeAssignment() *api.NodePodAssignment {
 }
 
 func (s *defaultSimulation) launchSchedulerForSimulation(ctx context.Context, simView mkapi.View) (api.SchedulerHandle, error) {
-	clientFacades, err := simView.GetClientFacades()
+	clientFacades, err := simView.GetNetworkClientFacades()
 	if err != nil {
 		return nil, err
 	}

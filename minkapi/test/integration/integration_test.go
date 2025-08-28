@@ -4,102 +4,51 @@ package integration
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	commontypes "github.com/gardener/scaling-advisor/api/common/types"
+	"github.com/gardener/scaling-advisor/common/testutil"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
 	"os"
-	"os/signal"
-	"syscall"
+	"sync"
 	"testing"
 	"time"
 
+	commoncli "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/cli"
-	"github.com/gardener/scaling-advisor/minkapi/server"
-
-	commoncli "github.com/gardener/scaling-advisor/common/cli"
-	"github.com/gardener/scaling-advisor/common/clientutil"
-	"github.com/gardener/scaling-advisor/common/objutil"
-	"github.com/go-logr/logr"
-	"github.com/spf13/pflag"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/klog/v2"
 )
 
 var state suiteState
 
 type suiteState struct {
-	apiServer api.Server
-	nodeA     corev1.Node
-	client    kubernetes.Interface
-	dynClient dynamic.Interface
+	app           *cli.App
+	nodeA         corev1.Node
+	podA          corev1.Pod
+	clientFacades commontypes.ClientFacades
 }
 
 // TestMain sets up the MinKAPI server once for all tests in this package, runs tests and then shutsdown.
 func TestMain(m *testing.M) {
-	var err error
-	commoncli.PrintVersion(api.ProgramName)
-	mainOpts, err := cli.ParseProgramFlags(os.Args[1:])
-
+	err := initSuite()
 	if err != nil {
-		if errors.Is(err, pflag.ErrHelp) {
-			return
-		}
-		_, _ = fmt.Fprintf(os.Stderr, "Err: %v\n", err)
-		os.Exit(commoncli.ExitErrParseOpts)
+		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize suite state: %v\n", err)
+		os.Exit(commoncli.ExitErrStart)
 	}
-	log := klog.NewKlogr()
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	state.apiServer, err = server.NewInMemory(log, mainOpts.MinKAPIConfig)
-	if err != nil {
-		log.Error(err, "failed to initialize InMemoryKAPI")
-		return
-	}
-	// Start the service in a goroutine
-	go func() {
-		err = state.apiServer.Start(logr.NewContext(ctx, log))
-		if err != nil {
-			if errors.Is(err, api.ErrStartFailed) {
-				log.Error(err, "failed to start service")
-			} else {
-				log.Error(err, fmt.Sprintf("%s start failed", api.ProgramName))
-			}
-		}
-	}()
-	<-time.After(1 * time.Second) // give some time for startup
-
-	err = initSuiteState()
-	if err != nil {
-		log.Error(err, "failed to initialize suite state")
-	}
-
 	// Run integration tests
 	exitCode := m.Run()
-
-	// Create a context with a 5-second timeout for shutdown
-	shutDownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Teardown: stop the server
-	err = state.apiServer.Stop(shutDownCtx)
-	if err != nil {
-		log.Error(err, fmt.Sprintf(" %s shutdown failed", api.ProgramName))
-		os.Exit(commoncli.ExitErrShutdown)
-	}
-	log.Info(fmt.Sprintf("%s integration shutdown gracefully.", api.ProgramName), "exitCode", exitCode)
+	shutdownSuite()
+	os.Exit(exitCode)
 }
 
 func TestBaseViewCreateGetNodes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	nodesFacade := state.client.CoreV1().Nodes()
+
+	nodesFacade := state.clientFacades.Client.CoreV1().Nodes()
 
 	t.Run("checkInitialNodeList", func(t *testing.T) {
 		nodeList, err := nodesFacade.List(ctx, metav1.ListOptions{})
@@ -125,23 +74,61 @@ func TestBaseViewCreateGetNodes(t *testing.T) {
 
 }
 
+type eventsHolder struct {
+	events []watch.Event
+	wg     sync.WaitGroup
+}
+
 func TestWatchPods(t *testing.T) {
-	ctx := context.Background()
-	watcher, err := state.client.CoreV1().Pods("").Watch(ctx, metav1.ListOptions{Watch: true})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var h eventsHolder
+	client := state.clientFacades.Client
+	watcher, err := client.CoreV1().Pods("").Watch(ctx, metav1.ListOptions{Watch: true})
 	if err != nil {
 		t.Fatalf("failed to create pods watcher: %v", err)
 		return
 	}
-	listObjects(t, watcher)
+	defer watcher.Stop()
+
+	h.wg.Add(1)
+	go func() {
+		listObjects(t, watcher, &h)
+	}()
+	createdPod, err := client.CoreV1().Pods("").Create(ctx, &state.podA, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("failed to create podA: %v", err)
+		return
+	}
+	t.Logf("Created podA with name %q", createdPod.Name)
+	h.wg.Wait()
+
+	t.Logf("got numEvents: %d", len(h.events))
+	if len(h.events) == 0 {
+		t.Fatalf("got no events, want at least one")
+		return
+	}
+	for _, ev := range h.events {
+		mo, err := meta.Accessor(ev.Object)
+		if err != nil {
+			t.Logf("WARN: Got event which is not a metav1.Object: %v", err)
+			continue
+		}
+		t.Logf("got event-> Type: %v | Object Kind: %q, Object Name: %q", ev.Type, ev.Object.GetObjectKind().GroupVersionKind(), cache.NewObjectName(mo.GetNamespace(), mo.GetName()))
+	}
+	if h.events[0].Type != watch.Added {
+		t.Errorf("got event type %v, want %v", h.events[0].Type, watch.Added)
+	}
 }
 
-func listObjects(t *testing.T, watcher watch.Interface) {
-	t.Helper()
+func listObjects(t *testing.T, watcher watch.Interface, h *eventsHolder) {
 	watchCh := watcher.ResultChan()
 	t.Logf("Iterating watchCh: %v", watchCh)
 	for ev := range watchCh {
-		t.Logf("%v: %v", ev.Type, ev.Object)
+		h.events = append(h.events, ev)
+		h.wg.Done()
 	}
+	return
 }
 func checkNodeIsSame(t *testing.T, got, want *corev1.Node) {
 	t.Helper()
@@ -153,17 +140,39 @@ func checkNodeIsSame(t *testing.T, got, want *corev1.Node) {
 	}
 }
 
-func initSuiteState() error {
+func initSuite() error {
 	var err error
-	kubeConfigPath := state.apiServer.GetBaseView().GetKubeConfigPath()
-	state.client, state.dynClient, err = clientutil.BuildClients(kubeConfigPath)
+
+	app, exitCode := cli.LaunchApp()
+	if exitCode != commoncli.ExitSuccess {
+		os.Exit(exitCode)
+	}
+	defer app.Cancel()
+	<-time.After(1 * time.Second) // give some time for startup
+
+	state.app = &app
+	state.clientFacades, err = app.Service.GetBaseView().GetClientFacades(api.NetworkClient)
 	if err != nil {
 		return err
 	}
-	scheme := runtime.NewScheme()
-	err = corev1.AddToScheme(scheme)
+
+	nodes, err := testutil.LoadTestNodes()
 	if err != nil {
 		return err
 	}
-	return objutil.LoadYAMLIntoRuntimeObject("testdata/node-a.yaml", scheme, &state.nodeA)
+	state.nodeA = nodes[0]
+
+	pods, err := testutil.LoadTestPods()
+	if err != nil {
+		return err
+	}
+	state.podA = pods[0]
+
+	return nil
+}
+func shutdownSuite() {
+	exitCode := cli.ShutdownApp(state.app)
+	if exitCode != commoncli.ExitSuccess {
+	}
+	os.Exit(exitCode)
 }

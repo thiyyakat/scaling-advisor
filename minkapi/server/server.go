@@ -9,24 +9,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gardener/scaling-advisor/common/webutil"
-	"github.com/gardener/scaling-advisor/minkapi/server/view"
-	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"io"
-	kjson "k8s.io/apimachinery/pkg/util/json"
-	"k8s.io/apimachinery/pkg/util/strategicpatch"
-	"k8s.io/client-go/tools/cache"
+	"k8s.io/apimachinery/pkg/types"
 	"net"
 	"net/http"
 	"net/http/pprof"
-	"reflect"
+	"net/url"
+	"path/filepath"
 	rt "runtime"
 	"strconv"
-	"time"
+
+	"github.com/gardener/scaling-advisor/common/webutil"
+	"github.com/gardener/scaling-advisor/minkapi/server/view"
+	kjson "k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/server/configtmpl"
-	"github.com/gardener/scaling-advisor/minkapi/server/podutil"
 	"github.com/gardener/scaling-advisor/minkapi/server/store"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 
@@ -38,8 +37,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/watch"
 )
 
@@ -47,16 +44,33 @@ var _ api.Server = (*InMemoryKAPI)(nil)
 
 // InMemoryKAPI holds the in-memory stores, watch channels, and version tracking for simple implementation of api.APIServer
 type InMemoryKAPI struct {
-	cfg          api.MinKAPIConfig
-	listenerAddr net.Addr
-	scheme       *runtime.Scheme
-	rootMux      *http.ServeMux
-	server       *http.Server
-	baseView     api.View
-	log          logr.Logger
+	cfg                 api.MinKAPIConfig
+	listenerAddr        net.Addr
+	scheme              *runtime.Scheme
+	rootMux             *http.ServeMux
+	server              *http.Server
+	baseView            api.View
+	createSandboxViewFn api.CreateSandboxViewFunc
+	sandboxViews        map[string]api.View
 }
 
-func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err error) {
+// NewDefaultInMemory constructs a KAPI server with default implementations of sub-components.
+func NewDefaultInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, error) {
+	scheme := typeinfo.SupportedScheme
+	baseView, err := view.New(log, &api.ViewArgs{
+		Name:           api.DefaultBasePrefix,
+		KubeConfigPath: cfg.KubeConfigPath,
+		Scheme:         scheme,
+		WatchConfig:    cfg.WatchConfig,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return NewInMemoryUsingViews(cfg, baseView, view.NewSandboxView)
+}
+
+// NewInMemoryUsingViews constructs a KAPI server with the given base view and the sandbox view creation function.
+func NewInMemoryUsingViews(cfg api.MinKAPIConfig, baseView api.View, sandboxViewCreateFn api.CreateSandboxViewFunc) (k api.Server, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("%w: %w", api.ErrInitFailed, err)
@@ -64,10 +78,6 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 	}()
 	setMinKAPIConfigDefaults(&cfg)
 	scheme := typeinfo.SupportedScheme
-	baseView, err := view.New(log, cfg.KubeConfigPath, scheme, cfg.WatchQueueSize, cfg.WatchTimeout)
-	if err != nil {
-		return
-	}
 	rootMux := http.NewServeMux()
 	s := &InMemoryKAPI{
 		cfg:     cfg,
@@ -76,25 +86,27 @@ func NewInMemory(log logr.Logger, cfg api.MinKAPIConfig) (k api.Server, err erro
 		server: &http.Server{
 			Addr: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		},
-		baseView: baseView,
-		log:      log,
+		baseView:            baseView,
+		createSandboxViewFn: sandboxViewCreateFn,
 	}
-	baseViewMux := http.NewServeMux()
-	s.registerRoutes(baseViewMux, cfg.BasePrefix)
+	// DO NOT REMOVE: Single route registration crap needed for kubectl compatability as it ignores server path prefixes
+	// and always makes a call to http://localhost:8084/api/v1/?timeout=32s
+	rootMux.HandleFunc("GET /api/v1/", s.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 	k = s
-
-	// Wrap the entire mux with the logger middleware
-	serverHandler := webutil.LoggerMiddleware(log, rootMux)
-	s.server.Handler = serverHandler
 	return
 }
 
-// Start begins the HTTP server
+// Start begins the MinKAPI server
 func (k *InMemoryKAPI) Start(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
 	k.server.BaseContext = func(_ net.Listener) context.Context {
 		return ctx
 	}
+	baseViewMux := http.NewServeMux()
+	k.registerRoutes(log, baseViewMux, k.baseView)
+	// Wrap the entire mux with the logger middleware
+	serverHandler := webutil.LoggerMiddleware(log, k.rootMux)
+	k.server.Handler = serverHandler
 	// We do this because we want the bind address
 	listener, err := net.Listen("tcp", k.server.Addr)
 	if err != nil {
@@ -122,14 +134,14 @@ func (k *InMemoryKAPI) Start(ctx context.Context) error {
 		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
 	}
 	log.Info("sample kube-scheduler-config generated", "path", schedulerTmplParams.KubeSchedulerConfigPath)
-	k.log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr, "kapiURL", kapiURL)
+	log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr, "kapiURL", kapiURL)
 	if err := k.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("%w: %w", api.ErrServiceFailed, err)
 	}
 	return nil
 }
 
-// Stop  shuts down the HTTP server and closes resources
+// Stop shuts down the HTTP server and closes resources
 func (k *InMemoryKAPI) Stop(ctx context.Context) (err error) {
 	err = k.server.Shutdown(ctx) // shutdown server first to avoid accepting new requests.
 	k.baseView.Close()
@@ -140,18 +152,47 @@ func (k *InMemoryKAPI) GetBaseView() api.View {
 	return k.baseView
 }
 
-func (k *InMemoryKAPI) GetSandboxView(pathPrefix string) (api.View, error) {
-	// TODO replace with SchedulerView
-	return view.New(k.log, k.cfg.KubeConfigPath, k.scheme, k.cfg.WatchQueueSize, k.cfg.WatchTimeout)
+func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.View, error) {
+	log := logr.FromContextOrDiscard(ctx).WithValues("sandboxName", name)
+	sandboxView, ok := k.sandboxViews[name] // TODO: protected with mutex.
+	if ok {
+		return sandboxView, nil
+	}
+	kapiURL := fmt.Sprintf("http://%s:%d/%s", k.cfg.Host, k.cfg.Port, name)
+	_, err := url.Parse(kapiURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid sandbox-kapi URI for view %q: %w", api.ErrCreateSandbox, name, err)
+	}
+	baseKubeConfigDir := filepath.Dir(k.cfg.KubeConfigPath)
+	kubeConfigPath := filepath.Join(baseKubeConfigDir, name)
+	err = configtmpl.GenKubeConfig(configtmpl.KubeConfigParams{
+		KubeConfigPath: kubeConfigPath,
+		URL:            kapiURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot generate kubeconfig for view %q: %w", api.ErrCreateSandbox, name, err)
+	}
+	log.Info("sandbox kubeconfig generated", "path", k.cfg.KubeConfigPath)
+
+	sandboxView, err = k.createSandboxViewFn(log, k.baseView, &api.ViewArgs{
+		Name:           name,
+		KubeConfigPath: kubeConfigPath,
+		Scheme:         k.scheme,
+		WatchConfig:    k.cfg.WatchConfig,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot create sandbox view for view %q: %w", api.ErrCreateSandbox, name, err)
+	}
+	sandboxViewMux := http.NewServeMux()
+	k.registerRoutes(log, sandboxViewMux, sandboxView)
+	k.sandboxViews[name] = sandboxView
+	return sandboxView, nil
 }
 
-func (k *InMemoryKAPI) GetMux() *http.ServeMux {
-	return k.rootMux
-}
-
-func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, pathPrefix string) {
+func (k *InMemoryKAPI) registerRoutes(log logr.Logger, viewMux *http.ServeMux, view api.View) {
+	// TODO: Design: Discuss this since this is not necessary when running as operator since operator has its own profiling enablement.
 	if k.cfg.ProfilingEnabled {
-		k.log.Info("profiling enabled - registering /debug/pprof/* handlers")
+		log.Info("profiling enabled - registering /debug/pprof/* handlers")
 		viewMux.HandleFunc("/debug/pprof/", pprof.Index)
 		viewMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 		viewMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
@@ -171,13 +212,11 @@ func (k *InMemoryKAPI) registerRoutes(viewMux *http.ServeMux, pathPrefix string)
 	k.registerAPIGroups(viewMux)
 
 	for _, d := range typeinfo.SupportedDescriptors {
-		k.registerResourceRoutes(viewMux, d, k.baseView)
+		k.registerResourceRoutes(viewMux, d, view)
 	}
 	// Register the view's mux under the pathPrefix, stripping the pathPrefix
-	k.rootMux.Handle("/"+pathPrefix+"/", http.StripPrefix("/"+pathPrefix, viewMux))
+	k.rootMux.Handle("/"+view.GetName()+"/", http.StripPrefix("/"+view.GetName(), viewMux))
 
-	// DO NOT REMOVE: Crap needed for kubectl compatability as it ignores base paths and always makes a call to http://localhost:8084/api/v1/?timeout=32s
-	k.rootMux.HandleFunc("GET /api/v1/", k.handleAPIResources(typeinfo.SupportedCoreAPIResourceList))
 }
 
 func (k *InMemoryKAPI) registerAPIGroups(viewMux *http.ServeMux) {
@@ -196,37 +235,37 @@ func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo
 	r := d.GVR.Resource
 	if d.GVK.Group == "" {
 		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/namespaces/{namespace}/%s", r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s", r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleGet(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePatchStatus(d))
-		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/namespaces/{namespace}/%s/{name}", r), k.handleDelete(d))
-		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}", r), k.handlePut(d))        // Update
-		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s", r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/namespaces/{namespace}/%s/{name}", r), handleGet(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}", r), handlePatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/namespaces/{namespace}/%s/{name}/status", r), handlePatchStatus(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/namespaces/{namespace}/%s/{name}", r), handleDelete(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}", r), handlePut(d, view))        // Update
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/namespaces/{namespace}/%s/{name}/status", r), handlePut(d, view)) // UpdateStatus
 
 		if d.Kind == typeinfo.PodsDescriptor.Kind {
-			viewMux.HandleFunc("POST /api/v1/namespaces/{namespace}/pods/{name}/binding", k.handleCreatePodBinding)
+			viewMux.HandleFunc("POST /api/v1/namespaces/{namespace}/pods/{name}/binding", handleCreatePodBinding(view))
 		}
 
 		viewMux.HandleFunc(fmt.Sprintf("POST /api/v1/%s", r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s", r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s/{name}", r), k.handleGet(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/%s/{name}", r), k.handlePatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/%s/{name}", r), k.handleDelete(d))
-		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}", r), k.handlePut(d))        // Update
-		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}/status", r), k.handlePut(d)) // UpdateStatus
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s", r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /api/v1/%s/{name}", r), handleGet(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /api/v1/%s/{name}", r), handlePatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /api/v1/%s/{name}", r), handleDelete(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}", r), handlePut(d, view))        // Update
+		viewMux.HandleFunc(fmt.Sprintf("PUT /api/v1/%s/{name}/status", r), handlePut(d, view)) // UpdateStatus
 	} else {
 		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/namespaces/{namespace}/%s", g, r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s", g, r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleGet(d))
-		viewMux.HandleFunc(fmt.Sprintf("PATCH /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handleDelete(d))
-		viewMux.HandleFunc(fmt.Sprintf("PUT /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), k.handlePut(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s", g, r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), handleGet(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PATCH /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), handlePatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), handleDelete(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("PUT /apis/%s/v1/namespaces/{namespace}/%s/{name}", g, r), handlePut(d, view))
 
 		viewMux.HandleFunc(fmt.Sprintf("POST /apis/%s/v1/%s", g, r), handleCreate(d, view))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s", g, r), k.handleListOrWatch(d))
-		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s/{name}", g, r), k.handleGet(d))
-		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/%s/{name}", g, r), k.handleDelete(d))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s", g, r), handleListOrWatch(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("GET /apis/%s/v1/%s/{name}", g, r), handleGet(d, view))
+		viewMux.HandleFunc(fmt.Sprintf("DELETE /apis/%s/v1/%s/{name}", g, r), handleDelete(d, view))
 	}
 }
 
@@ -258,12 +297,20 @@ func (k *InMemoryKAPI) handleAPIResources(apiResourceList metav1.APIResourceList
 	}
 }
 
-func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handleGet(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := getStoreOrWriteError(d.GVK, view, w, r)
-		if s == nil {
+		name := GetObjectName(r, d)
+		obj, err := view.GetObject(d.GVK, name)
+		if err != nil {
+			handleError(w, r, err)
 			return
 		}
+		writeJsonResponse(w, r, obj)
+	}
+}
+
+func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var (
 			mo  metav1.Object
 			err error
@@ -284,28 +331,7 @@ func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 			namespace = GetObjectName(r, d).Namespace
 			mo.SetNamespace(namespace)
 		}
-		name := mo.GetName()
-		namePrefix := mo.GetGenerateName()
-		if name == "" {
-			if namePrefix == "" {
-				err = fmt.Errorf("missing both name and generateName in request for creating object of objGvk %q in %q namespace", d.GVK, namespace)
-				handleBadRequest(w, r, err)
-				return
-			}
-			name = typeinfo.GenerateName(namePrefix)
-		}
-		mo.SetName(name)
-
-		createTimestamp := mo.GetCreationTimestamp()
-		if (&createTimestamp).IsZero() { // only set creationTimestamp if not already set.
-			mo.SetCreationTimestamp(metav1.Time{Time: time.Now()})
-		}
-
-		if mo.GetUID() == "" {
-			mo.SetUID(uuid.NewUUID())
-		}
-
-		err = s.Add(mo)
+		err = view.StoreObject(d.GVK, mo)
 		if err != nil {
 			handleError(w, r, err)
 			return
@@ -316,14 +342,10 @@ func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 
 // handlePut Ref: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#considerations-for-put-operations (TODO ensure handlePut follows this)
 // TODO: handlePut is not complete
-func (k *InMemoryKAPI) handlePut(d typeinfo.Descriptor) http.HandlerFunc {
+func handlePut(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
-		if s == nil {
-			return
-		}
-		key := GetObjectKey(r, d)
-		obj, err := s.GetByKey(key)
+		name := GetObjectName(r, d)
+		obj, err := view.GetObject(d.GVK, name)
 		if err != nil {
 			handleError(w, r, err)
 			return
@@ -332,7 +354,7 @@ func (k *InMemoryKAPI) handlePut(d typeinfo.Descriptor) http.HandlerFunc {
 			return
 		}
 		metaObj := obj.(metav1.Object)
-		err = s.Update(metaObj)
+		err = view.UpdateObject(d.GVK, metaObj)
 		if err != nil {
 			handleError(w, r, err)
 			return
@@ -340,54 +362,32 @@ func (k *InMemoryKAPI) handlePut(d typeinfo.Descriptor) http.HandlerFunc {
 		writeJsonResponse(w, r, obj)
 	}
 }
-
-func (k *InMemoryKAPI) handleGet(d typeinfo.Descriptor) http.HandlerFunc {
+func handleDelete(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
-		if s == nil {
-			return
-		}
-		key := GetObjectKey(r, d)
-		obj, err := s.GetByKey(key)
-		if err != nil {
-			handleError(w, r, err)
-			return
-		}
-		writeJsonResponse(w, r, obj)
-	}
-}
-
-func (k *InMemoryKAPI) handleDelete(d typeinfo.Descriptor) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
-		if s == nil {
-			return
-		}
-
-		objKey := GetObjectName(r, d).String()
-		obj, err := s.GetByKey(objKey)
-		if err != nil {
-			handleError(w, r, err)
-			return
-		}
-		err = s.Delete(objKey)
+		objName := GetObjectName(r, d)
+		obj, err := view.GetObject(d.GVK, objName)
 		if err != nil {
 			handleError(w, r, err)
 			return
 		}
 		mo, err := meta.Accessor(obj)
 		if err != nil {
-			handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", objKey, err))
+			handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", objName, err))
+			return
+		}
+		err = view.DeleteObject(d.GVK, objName)
+		if err != nil {
+			handleError(w, r, err)
 			return
 		}
 		status := metav1.Status{
-			TypeMeta: metav1.TypeMeta{ //No idea why this is explicitly needed just for this payload, but kubectl complains
+			TypeMeta: metav1.TypeMeta{ //No idea why this is explicitly needed just for this payload, but kubectl complains if missing.
 				Kind:       "Status",
 				APIVersion: "v1",
 			},
 			Status: metav1.StatusSuccess,
 			Details: &metav1.StatusDetails{
-				Name: objKey,
+				Name: objName.String(),
 				Kind: d.GVR.GroupResource().Resource,
 				UID:  mo.GetUID(),
 			},
@@ -396,7 +396,7 @@ func (k *InMemoryKAPI) handleDelete(d typeinfo.Descriptor) http.HandlerFunc {
 	}
 }
 
-func (k *InMemoryKAPI) handleListOrWatch(d typeinfo.Descriptor) http.HandlerFunc {
+func handleListOrWatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		isWatch := query.Get("watch")
@@ -408,23 +408,20 @@ func (k *InMemoryKAPI) handleListOrWatch(d typeinfo.Descriptor) http.HandlerFunc
 			return
 		}
 
-		if isWatch == "true" {
-			delegate = k.handleWatch(d, labelSelector)
+		if isWatch == "true" || isWatch == "1" {
+			delegate = handleWatch(d, view, labelSelector)
 		} else {
-			delegate = k.handleList(d, labelSelector)
+			delegate = handleList(d, view, labelSelector)
 		}
 		delegate.ServeHTTP(w, r)
 	}
 }
 
-func (k *InMemoryKAPI) handleList(d typeinfo.Descriptor, labelSelector labels.Selector) http.HandlerFunc {
+func handleList(d typeinfo.Descriptor, view api.View, labelSelector labels.Selector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
-		if s == nil {
-			return
-		}
 		namespace := r.PathValue("namespace")
-		listObj, err := s.List(namespace, labelSelector)
+		c := api.MatchCriteria{Namespace: namespace, LabelSelector: labelSelector}
+		listObj, err := view.ListObjects(d.GVK, c) //s.List(c)
 		if err != nil {
 			return
 		}
@@ -432,21 +429,12 @@ func (k *InMemoryKAPI) handleList(d typeinfo.Descriptor, labelSelector labels.Se
 	}
 }
 
-func (k *InMemoryKAPI) handlePatch(d typeinfo.Descriptor) http.HandlerFunc {
+func handlePatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
-		if s == nil {
-			return
-		}
-		key := GetObjectKey(r, d)
-		o, err := s.GetByKey(key)
-		if err != nil {
-			handleError(w, r, err)
-			return
-		}
+		name := GetObjectName(r, d)
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/strategic-merge-patch+json" && contentType != "application/merge-patch+json" {
-			err = fmt.Errorf("unsupported content type %q for o %q", contentType, key)
+			err := fmt.Errorf("unsupported content type %q for object %q", contentType, name)
 			handleBadRequest(w, r, err)
 			return
 		}
@@ -456,79 +444,46 @@ func (k *InMemoryKAPI) handlePatch(d typeinfo.Descriptor) http.HandlerFunc {
 			writeStatusError(w, r, statusErr)
 			return
 		}
-		err = patchObject(o, key, contentType, patchData)
+		patchedObj, err := view.PatchObject(d.GVK, name, types.PatchType(contentType), patchData)
 		if err != nil {
-			err = fmt.Errorf("failed to atch o %q: %w", key, err)
-			handleInternalServerError(w, r, err)
-			return
-		}
-		mo, err := meta.Accessor(o)
-		if err != nil {
-			handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", key, err))
-			return
-		}
-		err = s.Update(mo)
-		if err != nil {
+			err = fmt.Errorf("failed to patch object %q: %w", name, err)
 			handleError(w, r, err)
 			return
 		}
-		writeJsonResponse(w, r, o)
+		writeJsonResponse(w, r, patchedObj)
 	}
 }
 
-func (k *InMemoryKAPI) handlePatchStatus(d typeinfo.Descriptor) http.HandlerFunc {
+func handlePatchStatus(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
-		if s == nil {
-			return
-		}
-
-		key := GetObjectKey(r, d)
-		o, err := s.GetByKey(key)
-		if err != nil {
-			handleError(w, r, err)
-			return
-		}
+		objName := GetObjectName(r, d)
 		contentType := r.Header.Get("Content-Type")
 		if contentType != "application/strategic-merge-patch+json" {
-			err = fmt.Errorf("unsupported content type %q for o %q", contentType, key)
-			handleInternalServerError(w, r, err)
+			err := fmt.Errorf("unsupported content type %q for o %q", contentType, objName)
+			handleBadRequest(w, r, err)
 			return
 		}
 
 		patchData, err := io.ReadAll(r.Body)
 		if err != nil {
-			err = fmt.Errorf("failed to read patch body for o %q", key)
+			err = fmt.Errorf("failed to read patch body for o %q", objName)
 			handleInternalServerError(w, r, err)
 			return
 		}
-		err = patchStatus(o, key, patchData)
-		if err != nil {
-			err = fmt.Errorf("failed to atch status for o %q: %w", key, err)
-			handleInternalServerError(w, r, err)
-			return
-		}
-		mo, err := meta.Accessor(o)
-		if err != nil {
-			handleError(w, r, fmt.Errorf("stored object with key %q is not metav1.Object: %w", key, err))
-			return
-		}
-		err = s.Update(mo)
+
+		patchedObj, err := view.PatchObjectStatus(d.GVK, objName, patchData)
 		if err != nil {
 			handleError(w, r, err)
 			return
 		}
-		writeJsonResponse(w, r, o)
+		writeJsonResponse(w, r, patchedObj)
 	}
 }
 
-func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.Selector) http.HandlerFunc {
+// handleWatch implements watch request/response handling. It delegates watch functionality to the given api.View, only
+// passing a callback which encodes the watch event and flushed it to the response stream.
+func handleWatch(d typeinfo.Descriptor, view api.View, labelSelector labels.Selector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		s := k.getStoreOrWriteError(d.GVK, w, r)
-		if s == nil {
-			return
-		}
-
 		var (
 			ok           bool
 			startVersion int64
@@ -536,24 +491,26 @@ func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.S
 		)
 
 		namespace = r.PathValue("namespace")
-		startVersion, ok = getParseResourceVersion(k.log, w, r)
+		startVersion, ok = getParseResourceVersion(w, r)
 		if !ok {
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Transfer-Encoding", "chunked")
+		//w.Header().Set("Transfer-Encoding", "chunked") // NOTE: Don't do this since without setting Content-Length, the Go HTTP server automatically enables chunked transfer encoding
 		flusher := getFlusher(w)
 		if flusher == nil {
 			return
 		}
+		flusher.Flush() // 🚨important! unblocks client-go I/O so that it can construct a watcher!
 
-		err := s.Watch(r.Context(), startVersion, namespace, labelSelector, func(event watch.Event) error {
-			metaObj, err := store.AsMeta(k.log, event.Object)
+		log := logr.FromContextOrDiscard(r.Context())
+		err := view.WatchObjects(r.Context(), d.GVK, startVersion, namespace, labelSelector, func(event watch.Event) error {
+			metaObj, err := store.AsMeta(log, event.Object)
 			if err != nil {
 				return err
 			}
-			eventJson, err := buildWatchEventJson(k.log, &event)
+			eventJson, err := buildWatchEventJson(log, &event)
 			if err != nil {
 				err = fmt.Errorf("cannot  encode watch %q event for object name %q, namespace %q, resourceVersion %q: %w",
 					event.Type, metaObj.GetName(), metaObj.GetNamespace(), metaObj.GetResourceVersion(), err)
@@ -565,7 +522,7 @@ func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.S
 		})
 
 		if err != nil {
-			k.log.Error(err, "watch failed", "gvk", d.GVK, "namespace", namespace, "startVersion", startVersion, "labelSelector", labelSelector)
+			log.Error(err, "watch failed", "gvk", d.GVK, "namespace", namespace, "startVersion", startVersion, "labelSelector", labelSelector)
 		}
 	}
 }
@@ -576,56 +533,46 @@ func (k *InMemoryKAPI) handleWatch(d typeinfo.Descriptor, labelSelector labels.S
 //
 // Example Payload
 // {"kind":"Binding","apiVersion":"v1","metadata":{"name":"a-p4r2l","namespace":"default","uid":"b8124ee8-a0c7-4069-930d-fc5e901675d3"},"target":{"kind":"Node","name":"a-kl827"}}
-func (k *InMemoryKAPI) handleCreatePodBinding(w http.ResponseWriter, r *http.Request) {
-	d := typeinfo.PodsDescriptor
-	s := k.getStoreOrWriteError(d.GVK, w, r)
-	if s == nil {
-		return
+func handleCreatePodBinding(view api.View) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log := logr.FromContextOrDiscard(r.Context())
+		d := typeinfo.PodsDescriptor
+		binding := corev1.Binding{}
+		if !readBodyIntoObj(w, r, &binding) {
+			return
+		}
+		podName := GetObjectName(r, d)
+		//obj, err := view.GetObject(d.GVK, objName)
+		//if err != nil {
+		//	handleError(w, r, err)
+		//	return
+		//}
+		//pod := obj.(*corev1.Pod)
+		//pod.Spec.NodeName = binding.Target.Name
+		//podutil.UpdatePodCondition(&pod.Status, &corev1.PodCondition{
+		//	Type:   corev1.PodScheduled,
+		//	Status: corev1.ConditionTrue,
+		//})
+		pod, err := view.UpdatePodNodeBinding(podName, binding)
+		if err != nil {
+			log.Error(err, "cannot assign pod to node", "podName", podName, "nodeName", binding.Target.Name)
+			handleError(w, r, err)
+			return
+		}
+		log.V(3).Info("assigned pod to node", "podName", podName, "nodeName", pod.Spec.NodeName)
+		// Return {"kind":"Status","apiVersion":"v1","metadata":{},"status":"Success","code":201}
+		statusOK := &metav1.Status{
+			TypeMeta: metav1.TypeMeta{Kind: "Status"},
+			Status:   metav1.StatusSuccess,
+			Code:     http.StatusCreated,
+		}
+		writeJsonResponse(w, r, statusOK)
 	}
-	binding := corev1.Binding{}
-	if !readBodyIntoObj(w, r, &binding) {
-		return
-	}
-	key := GetObjectKey(r, d)
-	obj, err := s.GetByKey(key)
-	if err != nil {
-		handleError(w, r, err)
-		return
-	}
-	pod := obj.(*corev1.Pod)
-	pod.Spec.NodeName = binding.Target.Name
-	podutil.UpdatePodCondition(&pod.Status, &corev1.PodCondition{
-		Type:   corev1.PodScheduled,
-		Status: corev1.ConditionTrue,
-	})
-	err = s.Update(pod)
-	if err != nil {
-		k.log.Error(err, "cannot assign pod to node", "podName", pod.Name, "podNamespace", pod.Namespace, "nodeName", pod.Spec.NodeName)
-		handleError(w, r, err)
-		return
-	}
-	k.log.V(3).Info("assigned pod to node", "podName", pod.Name, "podNamespace", pod.Namespace, "nodeName", pod.Spec.NodeName)
-	// Return {"kind":"Status","apiVersion":"v1","metadata":{},"status":"Success","code":201}
-	statusOK := &metav1.Status{
-		TypeMeta: metav1.TypeMeta{Kind: "Status"},
-		Status:   metav1.StatusSuccess,
-		Code:     http.StatusCreated,
-	}
-	writeJsonResponse(w, r, statusOK)
 }
 
 func writeStatusError(w http.ResponseWriter, r *http.Request, statusError *apierrors.StatusError) {
 	w.WriteHeader(int(statusError.ErrStatus.Code))
 	writeJsonResponse(w, r, statusError.ErrStatus)
-}
-
-func (k *InMemoryKAPI) getStoreOrWriteError(gvk schema.GroupVersionKind, w http.ResponseWriter, r *http.Request) (s api.ResourceStore) {
-	s, err := k.baseView.GetResourceStore(gvk)
-	if err != nil {
-		k.log.Error(err, "store error", "gvk", gvk)
-		handleInternalServerError(w, r, err)
-	}
-	return s
 }
 
 func readBodyIntoObj(w http.ResponseWriter, r *http.Request, obj any) (ok bool) {
@@ -645,7 +592,7 @@ func readBodyIntoObj(w http.ResponseWriter, r *http.Request, obj any) (ok bool) 
 	return
 }
 
-func getParseResourceVersion(log logr.Logger, w http.ResponseWriter, r *http.Request) (resourceVersion int64, ok bool) {
+func getParseResourceVersion(w http.ResponseWriter, r *http.Request) (resourceVersion int64, ok bool) {
 	paramValue := r.URL.Query().Get("resourceVersion")
 	if paramValue == "" {
 		ok = true
@@ -706,10 +653,6 @@ func GetObjectName(r *http.Request, d typeinfo.Descriptor) cache.ObjectName {
 	return cache.NewObjectName(namespace, name)
 }
 
-func GetObjectKey(r *http.Request, d typeinfo.Descriptor) string {
-	return GetObjectName(r, d).String()
-}
-
 func parseLabelSelector(req *http.Request) (labels.Selector, error) {
 	raw := req.URL.Query().Get("labelSelector")
 	if raw == "" {
@@ -718,84 +661,12 @@ func parseLabelSelector(req *http.Request) (labels.Selector, error) {
 	return labels.Parse(raw)
 }
 
-func patchObject(objPtr runtime.Object, key string, contentType string, patchBytes []byte) error {
-	objValuePtr := reflect.ValueOf(objPtr)
-	if objValuePtr.Kind() != reflect.Ptr || objValuePtr.IsNil() {
-		return fmt.Errorf("object %q must be a non-nil pointer", key)
-	}
-	objInterface := objValuePtr.Interface()
-	originalJSON, err := kjson.Marshal(objInterface)
-	if err != nil {
-		return fmt.Errorf("failed to marshal object %q: %w", key, err)
-	}
-
-	var patchedBytes []byte
-	switch contentType {
-	case "application/strategic-merge-patch+json":
-		patchedBytes, err = strategicpatch.StrategicMergePatch(originalJSON, patchBytes, objInterface)
-		if err != nil {
-			return fmt.Errorf("failed to apply strategic merge patch for object %q: %w", key, err)
-		}
-	case "application/merge-patch+json":
-		patchedBytes, err = jsonpatch.MergePatch(originalJSON, patchBytes)
-		if err != nil {
-			return fmt.Errorf("failed to apply merge-patch for object %q: %w", key, err)
-		}
-	default:
-		return fmt.Errorf("unsupported patch content type %q for object %q", contentType, key)
-	}
-	err = kjson.Unmarshal(patchedBytes, objInterface)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal patched JSON back into obj %q: %w", key, err)
-	}
-	return nil
-}
-
-func patchStatus(objPtr runtime.Object, key string, patch []byte) error {
-	objValuePtr := reflect.ValueOf(objPtr)
-	if objValuePtr.Kind() != reflect.Ptr || objValuePtr.IsNil() {
-		return fmt.Errorf("object %q must be a non-nil pointer", key)
-	}
-	statusField := objValuePtr.Elem().FieldByName("Status")
-	if !statusField.IsValid() {
-		return fmt.Errorf("object %q of type %T has no Status field", key, objPtr)
-	}
-
-	var patchWrapper map[string]json.RawMessage
-	err := json.Unmarshal(patch, &patchWrapper)
-	if err != nil {
-		return fmt.Errorf("failed to parse patch for %q as JSON object: %w", key, err)
-	}
-	statusPatchRaw, ok := patchWrapper["status"]
-	if !ok {
-		return fmt.Errorf("patch for %q does not contain a 'status' key", key)
-	}
-
-	statusInterface := statusField.Interface()
-	originalStatusJSON, err := kjson.Marshal(statusInterface)
-	if err != nil {
-		return fmt.Errorf("failed to marshal original status for object %q: %w", key, err)
-	}
-	patchedStatusJSON, err := strategicpatch.StrategicMergePatch(originalStatusJSON, statusPatchRaw, statusInterface)
-	if err != nil {
-		return fmt.Errorf("failed to apply strategic merge patch for object %q: %w", key, err)
-	}
-
-	newStatusVal := reflect.New(statusField.Type())
-	newStatusPtr := newStatusVal.Interface()
-	if err := json.Unmarshal(patchedStatusJSON, newStatusPtr); err != nil {
-		return fmt.Errorf("failed to unmarshal patched status for object %q: %w", key, err)
-	}
-	statusField.Set(newStatusVal.Elem())
-	return nil
-}
-
 func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
-	if cfg.WatchQueueSize <= 0 {
-		cfg.WatchQueueSize = api.DefaultWatchQueueSize
+	if cfg.WatchConfig.QueueSize <= 0 {
+		cfg.WatchConfig.QueueSize = api.DefaultWatchQueueSize
 	}
-	if cfg.WatchTimeout <= 0 {
-		cfg.WatchTimeout = api.DefaultWatchTimeout
+	if cfg.WatchConfig.Timeout <= 0 {
+		cfg.WatchConfig.Timeout = api.DefaultWatchTimeout
 	}
 	if cfg.KubeConfigPath == "" {
 		cfg.KubeConfigPath = api.DefaultKubeConfigPath
@@ -805,15 +676,6 @@ func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
 	}
 }
 
-func getStoreOrWriteError(gvk schema.GroupVersionKind, view api.View, w http.ResponseWriter, r *http.Request) (s api.ResourceStore) {
-	log := logr.FromContextOrDiscard(r.Context())
-	s, err := view.GetResourceStore(gvk)
-	if err != nil {
-		log.Error(err, "store error", "gvk", gvk)
-		handleInternalServerError(w, r, err)
-	}
-	return s
-}
 func handleError(w http.ResponseWriter, r *http.Request, err error) {
 	var statusErr *apierrors.StatusError
 	if errors.As(err, &statusErr) {
@@ -823,6 +685,8 @@ func handleError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 func handleStatusError(w http.ResponseWriter, r *http.Request, statusErr *apierrors.StatusError) {
+	log := logr.FromContextOrDiscard(r.Context())
+	log.Error(statusErr, "status error", "gvk", statusErr.ErrStatus.GroupVersionKind, "code", statusErr.ErrStatus.Code, "reason", statusErr.ErrStatus.Reason, "message", statusErr.ErrStatus.Message)
 	w.WriteHeader(int(statusErr.ErrStatus.Code))
 	w.Header().Set("Content-Type", "application/json")
 	writeJsonResponse(w, r, statusErr.ErrStatus)

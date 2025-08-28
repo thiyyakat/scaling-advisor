@@ -29,38 +29,23 @@ import (
 var _ api.ResourceStore = (*InMemResourceStore)(nil)
 
 type InMemResourceStore struct {
-	objGVK       schema.GroupVersionKind
-	objListGVK   schema.GroupVersionKind
-	resourceName string
-	delegate     cache.Store
-	broadcaster  *watch.Broadcaster
-	watchTimeout time.Duration
-	rvCounter    atomic.Int64
-	scheme       *runtime.Scheme
-	log          logr.Logger
+	args        *api.ResourceStoreArgs
+	delegate    cache.Store
+	broadcaster *watch.Broadcaster
+	rvCounter   atomic.Int64
+	log         logr.Logger
 }
 
 // NewInMemResourceStore returns an in-memory store for a given object GVK. TODO: think on simplifying parameters.
-func NewInMemResourceStore(
-	objGVK schema.GroupVersionKind,
-	objListGVK schema.GroupVersionKind,
-	resourceName string,
-	watchQueueSize int,
-	watchTimeout time.Duration,
-	scheme *runtime.Scheme,
-	log logr.Logger) *InMemResourceStore {
+func NewInMemResourceStore(log logr.Logger, args *api.ResourceStoreArgs) *InMemResourceStore {
 	s := InMemResourceStore{
-		objGVK:       objGVK,
-		objListGVK:   objListGVK,
-		resourceName: resourceName,
-		delegate:     cache.NewStore(cache.MetaNamespaceKeyFunc),
+		log:      log,
+		args:     args,
+		delegate: cache.NewStore(cache.MetaNamespaceKeyFunc),
 		//broadcaster: watch.NewBroadcaster(watchQueueSize, watch.DropIfChannelFull),
-		broadcaster:  watch.NewBroadcaster(watchQueueSize, watch.WaitIfChannelFull),
-		watchTimeout: watchTimeout,
-		scheme:       scheme,
-		log:          log,
+		broadcaster: watch.NewBroadcaster(args.WatchConfig.QueueSize, watch.WaitIfChannelFull),
 	}
-	s.log.Info("created in memory resource store", "GVK", objGVK, "resourceName", resourceName, "watchTimeout", watchTimeout)
+	s.log.Info("created in memory resource store", "GVK", args.ObjectGVK, "resourceName", args.Name, "watchTimeout", args.WatchConfig.Timeout, "watchQueueSize", args.WatchConfig.QueueSize)
 	s.rvCounter.Store(1)
 	return &s
 }
@@ -76,7 +61,7 @@ func (s *InMemResourceStore) Add(mo metav1.Object) error {
 	if err != nil {
 		return apierrors.NewInternalError(fmt.Errorf("cannot add object %q to store: %w", key, err))
 	}
-	s.log.V(4).Info("added object to store", "kind", s.objGVK.Kind, "key", key, "resourceVersion", mo.GetResourceVersion())
+	s.log.V(4).Info("added object to store", "kind", s.args.ObjectGVK.Kind, "key", key, "resourceVersion", mo.GetResourceVersion())
 
 	go func() {
 		err = s.broadcaster.Action(watch.Added, o)
@@ -98,7 +83,7 @@ func (s *InMemResourceStore) Update(mo metav1.Object) error {
 	if err != nil {
 		return apierrors.NewInternalError(fmt.Errorf("cannot update object %q in store: %w", key, err))
 	}
-	s.log.V(4).Info("updated object in store", "kind", s.objGVK.Kind, "key", key, "resourceVersion", mo.GetResourceVersion())
+	s.log.V(4).Info("updated object in store", "kind", s.args.ObjectGVK.Kind, "key", key, "resourceVersion", mo.GetResourceVersion())
 	go func() {
 		err = s.broadcaster.Action(watch.Modified, o)
 		if err != nil {
@@ -123,7 +108,7 @@ func (s *InMemResourceStore) Delete(key string) error {
 		return apierrors.NewInternalError(err)
 	}
 	mo.SetDeletionTimestamp(&metav1.Time{Time: time.Time{}})
-	s.log.V(4).Info("deleted object", "kind", s.objGVK.Kind, "key", key)
+	s.log.V(4).Info("deleted object", "kind", s.args.ObjectGVK.Kind, "key", key)
 	go func() {
 		err = s.broadcaster.Action(watch.Deleted, o)
 		if err != nil {
@@ -142,7 +127,7 @@ func (s *InMemResourceStore) GetByKey(key string) (o runtime.Object, err error) 
 	}
 	if !exists {
 		s.log.V(4).Info("did not find object by key", "key", key)
-		err = apierrors.NewNotFound(schema.GroupResource{Group: s.objGVK.Group, Resource: s.resourceName}, key)
+		err = apierrors.NewNotFound(schema.GroupResource{Group: s.args.ObjectGVK.Group, Resource: s.args.Name}, key)
 		return
 	}
 	o, ok := obj.(runtime.Object)
@@ -155,13 +140,13 @@ func (s *InMemResourceStore) GetByKey(key string) (o runtime.Object, err error) 
 	return
 }
 
-func (s *InMemResourceStore) List(namespace string, labelSelector labels.Selector) (listObj runtime.Object, err error) {
+func (s *InMemResourceStore) List(c api.MatchCriteria) (listObj runtime.Object, err error) {
 	items := s.delegate.List()
 	currVersionStr := fmt.Sprintf("%d", s.CurrentResourceVersion())
-	typesMap := typeinfo.SupportedScheme.KnownTypes(s.objGVK.GroupVersion())
-	listType, ok := typesMap[s.objListGVK.Kind]
+	typesMap := typeinfo.SupportedScheme.KnownTypes(s.args.ObjectGVK.GroupVersion())
+	listType, ok := typesMap[s.args.ObjectListGVK.Kind]
 	if !ok {
-		return nil, runtime.NewNotRegisteredErrForKind(typeinfo.SupportedScheme.Name(), s.objListGVK)
+		return nil, runtime.NewNotRegisteredErrForKind(typeinfo.SupportedScheme.Name(), s.args.ObjectListGVK)
 	}
 	ptr := reflect.New(listType) // *PodList
 	listObjVal := ptr.Elem()     // PodList
@@ -174,15 +159,15 @@ func (s *InMemResourceStore) List(namespace string, labelSelector labels.Selecto
 		return nil, fmt.Errorf("failed to get ListMeta field on %v", listObjVal)
 	}
 	typeMetaVal.Set(reflect.ValueOf(metav1.TypeMeta{
-		Kind:       s.objListGVK.Kind,
-		APIVersion: s.objGVK.GroupVersion().String(),
+		Kind:       s.args.ObjectListGVK.Kind,
+		APIVersion: s.args.ObjectGVK.GroupVersion().String(),
 	}))
 	listMetaVal.Set(reflect.ValueOf(metav1.ListMeta{
 		ResourceVersion: currVersionStr,
 	}))
 	itemsField := listObjVal.FieldByName("Items")
 	if !itemsField.IsValid() || !itemsField.CanSet() || itemsField.Kind() != reflect.Slice {
-		return nil, fmt.Errorf("list object type %T for kind %q does not have a settable slice field named Items", listObj, s.objGVK.Kind)
+		return nil, fmt.Errorf("list object type %T for kind %q does not have a settable slice field named Items", listObj, s.args.ObjectGVK.Kind)
 	}
 	itemType := itemsField.Type().Elem() // e.g., v1.Pod
 	resultSlice := reflect.MakeSlice(itemsField.Type(), 0, len(items))
@@ -197,18 +182,19 @@ func (s *InMemResourceStore) List(namespace string, labelSelector labels.Selecto
 			s.log.Error(err, "cannot access meta object", "obj", obj)
 			continue
 		}
-		if namespace != "" && metaV1Obj.GetNamespace() != namespace {
+
+		if c.Namespace != "" && metaV1Obj.GetNamespace() != c.Namespace {
 			continue
 		}
-		if !labelSelector.Matches(labels.Set(metaV1Obj.GetLabels())) {
+		if !c.LabelSelector.Matches(labels.Set(metaV1Obj.GetLabels())) {
 			continue
 		}
 		val := reflect.ValueOf(obj)
 		if val.Kind() != reflect.Ptr || val.IsNil() {
-			return nil, fmt.Errorf("element for kind %q is not a non-nil pointer: %T", s.objGVK, obj)
+			return nil, fmt.Errorf("element for kind %q is not a non-nil pointer: %T", s.args.ObjectGVK, obj)
 		}
 		if val.Elem().Type() != itemType {
-			return nil, fmt.Errorf("type mismatch, list kind %q expects items of type %v, but got %v", s.objListGVK, itemType, val.Elem().Type())
+			return nil, fmt.Errorf("type mismatch, list kind %q expects items of type %v, but got %v", s.args.ObjectListGVK, itemType, val.Elem().Type())
 		}
 		resultSlice = reflect.Append(resultSlice, val.Elem()) // append the dereferenced struct
 	}
@@ -263,8 +249,8 @@ func (s *InMemResourceStore) validateRuntimeObj(mo metav1.Object) (o runtime.Obj
 		return
 	}
 	oGVK := o.GetObjectKind().GroupVersionKind()
-	if oGVK != s.objGVK {
-		err = fmt.Errorf("object objGVK %q does not match expected objGVK %q", oGVK, s.objGVK)
+	if oGVK != s.args.ObjectGVK {
+		err = fmt.Errorf("object objGVK %q does not match expected objGVK %q", oGVK, s.args.ObjectGVK)
 	}
 	return
 }
@@ -299,14 +285,14 @@ func (s *InMemResourceStore) Watch(ctx context.Context, startVersion int64, name
 	}
 	watcher, err := s.broadcaster.WatchWithPrefix(events)
 	if err != nil {
-		return fmt.Errorf("cannot start watch for gvk %q: %w", s.objGVK, err)
+		return fmt.Errorf("cannot start watch for gvk %q: %w", s.args.ObjectGVK, err)
 	}
 	defer watcher.Stop()
 	for {
 		select {
 		case event, ok := <-watcher.ResultChan():
 			if !ok {
-				s.log.V(4).Info("no more events on watch result channel for gvk.", "gvk", s.objGVK)
+				s.log.V(4).Info("no more events on watch result channel for gvk.", "gvk", s.args.ObjectGVK)
 				return nil
 			}
 			skip, err := shouldSkipObject(s.log, event.Object, startVersion, namespace, labelSelector)
@@ -320,11 +306,11 @@ func (s *InMemResourceStore) Watch(ctx context.Context, startVersion int64, name
 			if err != nil {
 				return err
 			}
-		case <-time.After(s.watchTimeout):
-			s.log.V(4).Info("watcher timed out", "gvk", s.objGVK, "watchTimeout", s.watchTimeout, "startVersion", startVersion, "namespace", namespace, "labelSelector", labelSelector.String())
+		case <-time.After(s.args.WatchConfig.Timeout):
+			s.log.V(4).Info("watcher timed out", "gvk", s.args.ObjectGVK, "watchTimeout", s.args.WatchConfig.Timeout, "startVersion", startVersion, "namespace", namespace, "labelSelector", labelSelector.String())
 			return nil
 		case <-ctx.Done():
-			s.log.V(4).Info("watch context cancelled", "gvk", s.objGVK, "startVersion", startVersion, "namespace", namespace, "labelSelector", labelSelector.String())
+			s.log.V(4).Info("watch context cancelled", "gvk", s.args.ObjectGVK, "startVersion", startVersion, "namespace", namespace, "labelSelector", labelSelector.String())
 			return nil
 		}
 	}
@@ -336,7 +322,7 @@ func (s *InMemResourceStore) CurrentResourceVersion() int64 {
 
 func (s *InMemResourceStore) Shutdown() {
 	if s.broadcaster != nil {
-		s.log.V(4).Info("shutting down broadcaster for store", "gvk", s.objGVK)
+		s.log.V(4).Info("shutting down broadcaster for store", "gvk", s.args.ObjectGVK)
 		s.broadcaster.Shutdown()
 	}
 }

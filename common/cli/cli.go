@@ -5,11 +5,15 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/go-logr/logr"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"syscall"
 
 	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	"github.com/spf13/pflag"
@@ -75,4 +79,14 @@ func ValidateServerConfigFlags(opts commontypes.ServerConfig) error {
 		return fmt.Errorf("%w: --port must be greater than 0", ErrInvalidOpt)
 	}
 	return nil
+}
+
+// CreateAppContext setups up an app context with signal cancellation and a application logr.Logger.
+func CreateAppContext() (context.Context, context.CancelFunc) {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+
+	// Set up logr with klog backend using NewKlogr
+	log := klog.NewKlogr()
+	ctx = logr.NewContext(ctx, log)
+	return ctx, stop
 }
