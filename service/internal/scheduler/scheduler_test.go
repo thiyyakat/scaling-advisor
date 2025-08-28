@@ -63,8 +63,21 @@ func TestPodNodeAssignment(t *testing.T) {
 		return
 	}
 	t.Logf("Created podA with name %q", createdPod.Name)
-	<-time.After(10 * time.Second)
-	t.Logf("events  = %v", state.app.Service.GetBaseView().GetEventSink().List())
+	<-time.After(5 * time.Second) // TODO: replace with better approach.
+	evList := state.app.Service.GetBaseView().GetEventSink().List()
+	if len(evList) == 0 {
+		t.Fatalf("got no evList, want at least one")
+		return
+	}
+	t.Logf("got numEvents: %d", len(evList))
+	bindingEvent := evList[0]
+	t.Logf("binding event note: %q", bindingEvent.Note)
+	if bindingEvent.Action != "Binding" {
+		t.Errorf("got event type %v, want %v", bindingEvent.Type, "Binding")
+	}
+	if bindingEvent.Reason != "Scheduled" {
+		t.Errorf("got event reason %v, want %v", bindingEvent.Reason, "Scheduled")
+	}
 }
 
 func initSuite() error {

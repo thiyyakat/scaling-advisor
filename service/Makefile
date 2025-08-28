@@ -1,14 +1,13 @@
-# Change these variables as necessary.
-
 MODULE_ROOT     := $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))")
 REPO_ROOT               := $(shell dirname "$(MODULE_ROOT)")
 REPO_HACK_DIR           := $(REPO_ROOT)/hack
 
-main_pkg_path = .
-binary_name = minkapi
-
 # include tools targets
 include $(REPO_HACK_DIR)/tools.mk
+
+# Change these variables as necessary.
+main_pkg_path = ./cmd/scadsvc
+binary_name = scadsvc
 
 ## help: print this help message
 .PHONY: help
@@ -50,7 +49,7 @@ tidy:
 .PHONY: build
 build:
 	mkdir -p bin
-    # Include additional build steps, like main_package_pathor Tailwind compilation here...
+    # Include additional build steps, like TypeScript, SCSS or Tailwind compilation here...
 	go build -buildvcs -o=bin/${binary_name} ${main_pkg_path}
 
 .PHONY: format

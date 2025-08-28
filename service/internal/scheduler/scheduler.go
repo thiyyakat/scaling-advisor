@@ -102,7 +102,11 @@ func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn 
 	}()
 	log := logr.FromContextOrDiscard(ctx)
 	broadcaster := events.NewBroadcaster(params.EventSink)
-	recorderFactory := profile.NewRecorderFactory(broadcaster)
+	broadcaster.StartRecordingToSink(ctx.Done())
+	//
+	name := "embedded-scheduler-" + rand.String(5)
+	recorderFactory := profile.NewRecorderFactory(broadcaster) //
+	// Explicit recorder factory using your instance name
 	sched, err := scheduler.New(
 		ctx,
 		params.Client,
@@ -126,7 +130,6 @@ func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn 
 	if err = sched.WaitForHandlersSync(ctx); err != nil {
 		return
 	}
-	name := "scheduler-" + rand.String(5)
 	handle = &schedulerHandle{
 		ctx:       ctx,
 		name:      "scheduler-" + rand.String(5),

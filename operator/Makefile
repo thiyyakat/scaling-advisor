@@ -6,7 +6,7 @@ MODULE_ROOT     := $(shell dirname "$(realpath $(lastword $(MAKEFILE_LIST)))")
 REPO_ROOT                := $(shell dirname "$(MODULE_ROOT)")
 REPO_HACK_DIR            := $(REPO_ROOT)/hack
 
-main_path = ./cmd/scalingadvisor
+main_pkg_path = ./cmd/scalingadvisor
 binary_name = scalingadvisor
 
 # include tools targets
@@ -19,7 +19,7 @@ tidy:
 .PHONY: build
 build:
 	mkdir -p bin
-	go build -buildvcs -o=bin/${binary_name} ${main_path}
+	go build -buildvcs -o=bin/${binary_name} ${main_pkg_path}
 
 .PHONY: format
 format: $(GOIMPORTS_REVISER)
