@@ -86,8 +86,9 @@ func (s *schedulerLauncher) Launch(ctx context.Context, params *api.SchedulerLau
 	}
 
 	go func() {
-		log.Info("Launching scheduler", "name", handle.name)
+		log.Info("Running scheduler", "name", handle.name)
 		handle.scheduler.Run(schedulerCtx)
+		log.Info("Stopped scheduler", "name", handle.name)
 	}()
 	return handle, nil
 }
@@ -125,9 +126,7 @@ func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn 
 	if err = sched.WaitForHandlersSync(ctx); err != nil {
 		return
 	}
-	log.V(3).Info("scheduler handlers synced")
-	log.Info("Starting scheduler.Generate with config", "config", s.schedulerConfig)
-
+	name := "scheduler-" + rand.String(5)
 	handle = &schedulerHandle{
 		ctx:       ctx,
 		name:      "scheduler-" + rand.String(5),
@@ -135,6 +134,7 @@ func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn 
 		cancelFn:  cancelFn,
 		params:    params,
 	}
+	log.V(3).Info("created scheduler handle", "name", name)
 	return
 }
 

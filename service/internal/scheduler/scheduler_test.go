@@ -20,7 +20,9 @@ import (
 var state suiteState
 
 type suiteState struct {
-	kapiApp         *mkcli.App
+	ctx             context.Context
+	cancel          context.CancelFunc
+	app             *mkcli.App
 	nodeA           corev1.Node
 	podA            corev1.Pod
 	clientFacades   commontypes.ClientFacades
@@ -35,6 +37,7 @@ func TestMain(m *testing.M) {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to initialize suite state: %v\n", err)
 		os.Exit(commoncli.ExitErrStart)
 	}
+	defer state.cancel()
 	// Run integration tests
 	exitCode := m.Run()
 	shutdownSuite()
@@ -61,7 +64,7 @@ func TestPodNodeAssignment(t *testing.T) {
 	}
 	t.Logf("Created podA with name %q", createdPod.Name)
 	<-time.After(10 * time.Second)
-	t.Logf("events  = %v", state.kapiApp.Service.GetBaseView().GetEventSink().List())
+	t.Logf("events  = %v", state.app.Service.GetBaseView().GetEventSink().List())
 }
 
 func initSuite() error {
@@ -71,10 +74,10 @@ func initSuite() error {
 	if exitCode != commoncli.ExitSuccess {
 		os.Exit(exitCode)
 	}
-	defer app.Cancel()
 	<-time.After(1 * time.Second) // give some time for startup
 
-	state.kapiApp = &app
+	state.app = &app
+	state.ctx, state.cancel = app.Ctx, app.Cancel
 	state.clientFacades, err = app.Service.GetBaseView().GetClientFacades(mkapi.NetworkClient)
 	if err != nil {
 		return err
@@ -88,7 +91,7 @@ func initSuite() error {
 		ClientFacades: state.clientFacades,
 		EventSink:     app.Service.GetBaseView().GetEventSink(),
 	}
-	state.schedulerHandle, err = launcher.Launch(app.Ctx, params)
+	state.schedulerHandle, err = launcher.Launch(state.ctx, params)
 	if err != nil {
 		return err
 	}
@@ -109,7 +112,7 @@ func initSuite() error {
 
 func shutdownSuite() {
 	state.schedulerHandle.Stop()
-	exitCode := mkcli.ShutdownApp(state.kapiApp)
+	exitCode := mkcli.ShutdownApp(state.app)
 	if exitCode != commoncli.ExitSuccess {
 	}
 	os.Exit(exitCode)
