@@ -83,13 +83,14 @@ func TestLeastWasteScoringStrategy(t *testing.T) {
 	}{
 		"pod scheduled on scaled node only": {
 			input: api.NodeScoreArgs{
+				ID:               "testing",
 				Placement:        api.NodePlacementInfo{},
 				ScaledAssignment: &assignment,
-				Assignments:      nil,
+				OtherAssignments: nil,
 				UnscheduledPods:  nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
-				Name:               "",
+				ID:                 "testing",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              700,
@@ -98,16 +99,17 @@ func TestLeastWasteScoringStrategy(t *testing.T) {
 		},
 		"pods scheduled on scaled node and existing node": {
 			input: api.NodeScoreArgs{
+				ID:               "testing",
 				Placement:        api.NodePlacementInfo{},
 				ScaledAssignment: &assignment,
-				Assignments: []api.NodePodAssignment{{
+				OtherAssignments: []api.NodePodAssignment{{
 					Node:          CreateMockNode("exNode1", "instance-b-1", 2, 4),
 					ScheduledPods: []api.PodResourceInfo{CreateMockPod("simPodB", 1, 2)},
 				}},
 				UnscheduledPods: nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
-				Name:               "",
+				ID:                 "testing",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              0,
@@ -149,12 +151,14 @@ func TestLeastCostScoringStrategy(t *testing.T) {
 	}{
 		"pod scheduled on scaled node only": {
 			input: api.NodeScoreArgs{
+				ID:               "testing",
 				Placement:        api.NodePlacementInfo{Region: ""},
 				ScaledAssignment: &assignment,
-				Assignments:      nil,
+				OtherAssignments: nil,
 				UnscheduledPods:  nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
+				ID:                 "testing",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              350,
@@ -163,15 +167,17 @@ func TestLeastCostScoringStrategy(t *testing.T) {
 		},
 		"pods scheduled on scaled node and existing node": {
 			input: api.NodeScoreArgs{
+				ID:               "testing",
 				Placement:        api.NodePlacementInfo{Region: ""},
 				ScaledAssignment: &assignment,
-				Assignments: []api.NodePodAssignment{{
+				OtherAssignments: []api.NodePodAssignment{{
 					Node:          CreateMockNode("exNode1", "instance-b-1", 2, 4),
 					ScheduledPods: []api.PodResourceInfo{CreateMockPod("simPodB", 1, 2)},
 				}},
 				UnscheduledPods: nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
+				ID:                 "testing",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              700,
@@ -206,9 +212,9 @@ func TestSelectMaxAllocatable(t *testing.T) {
 		expectedIn  []api.NodeScore
 	}{
 		"single node score": {
-			input:       []api.NodeScore{{Name: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
+			input:       []api.NodeScore{{ID: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
 			expectedErr: nil,
-			expectedIn:  []api.NodeScore{{Name: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
+			expectedIn:  []api.NodeScore{{ID: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
 		},
 		"no node score": {
 			input:       []api.NodeScore{},
@@ -218,13 +224,13 @@ func TestSelectMaxAllocatable(t *testing.T) {
 		"different allocatables": {
 			input: []api.NodeScore{
 				{
-					Name:               "",
+					ID:                 "testing1",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "",
+					ID:                 "testing2",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
@@ -232,7 +238,7 @@ func TestSelectMaxAllocatable(t *testing.T) {
 				}},
 			expectedErr: nil,
 			expectedIn: []api.NodeScore{{
-				Name:               "",
+				ID:                 "testing2",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              1,
@@ -242,13 +248,13 @@ func TestSelectMaxAllocatable(t *testing.T) {
 		"identical allocatables": {
 			input: []api.NodeScore{
 				{
-					Name:               "",
+					ID:                 "testing1",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "",
+					ID:                 "testing2",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
@@ -258,13 +264,13 @@ func TestSelectMaxAllocatable(t *testing.T) {
 			expectedErr: nil,
 			expectedIn: []api.NodeScore{
 				{
-					Name:               "",
+					ID:                 "testing1",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "",
+					ID:                 "testing2",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
@@ -310,9 +316,9 @@ func TestSelectMinPrice(t *testing.T) {
 		expectedIn  []api.NodeScore
 	}{
 		"single node score": {
-			input:       []api.NodeScore{{Name: "", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
+			input:       []api.NodeScore{{ID: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
 			expectedErr: nil,
-			expectedIn:  []api.NodeScore{{Name: "", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
+			expectedIn:  []api.NodeScore{{ID: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
 		},
 		"no node score": {
 			input:       []api.NodeScore{},
@@ -322,13 +328,13 @@ func TestSelectMinPrice(t *testing.T) {
 		"different prices": {
 			input: []api.NodeScore{
 				{
-					Name:               "",
+					ID:                 "testing1",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "",
+					ID:                 "testing2",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
@@ -338,7 +344,7 @@ func TestSelectMinPrice(t *testing.T) {
 			expectedErr: nil,
 			expectedIn: []api.NodeScore{
 				{
-					Name:               "",
+					ID:                 "testing1",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
@@ -347,13 +353,13 @@ func TestSelectMinPrice(t *testing.T) {
 		"identical prices": {
 			input: []api.NodeScore{
 				{
-					Name:               "",
+					ID:                 "testing1",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "",
+					ID:                 "testing2",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
@@ -363,13 +369,13 @@ func TestSelectMinPrice(t *testing.T) {
 			expectedErr: nil,
 			expectedIn: []api.NodeScore{
 				{
-					Name:               "",
+					ID:                 "testing1",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "",
+					ID:                 "testing2",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,

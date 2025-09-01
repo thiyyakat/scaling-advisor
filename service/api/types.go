@@ -232,21 +232,23 @@ type NodeScorer interface {
 	Compute(args NodeScoreArgs) (NodeScore, error)
 }
 type NodeScoreArgs struct {
+	// ID that must be given to the NodeScore produced by the NodeScorer
+	ID string
 	// Placement represents the placement information for the Node.
 	Placement NodePlacementInfo
 	// ScaledAssignment represents the assignment of the scaled Node for the current run.
 	ScaledAssignment *NodePodAssignment
-	// Assignments represent the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
+	// OtherAssignments represent the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
 	// or it is a winning simulated Node from a previous run.
-	Assignments []NodePodAssignment
+	OtherAssignments []NodePodAssignment
 	// UnscheduledPods is the slice of unscheduled pods that remain unscheduled after simulation is completed.
 	UnscheduledPods []types.NamespacedName
 }
 
 // NodeScore to be documented later.
 type NodeScore struct {
-	// Name is the name for this node score
-	Name string
+	// ID uniquely identifies this NodeScore
+	ID string
 	// Placement represents the placement information for the Node.
 	Placement       NodePlacementInfo
 	UnscheduledPods []types.NamespacedName

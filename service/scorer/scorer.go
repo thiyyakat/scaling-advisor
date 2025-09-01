@@ -65,7 +65,7 @@ type LeastCost struct {
 // based on pre-configured weights.
 func (l LeastCost) Compute(args api.NodeScoreArgs) (api.NodeScore, error) {
 	//add resources required by pods scheduled on scaled candidate node and existing nodes
-	aggregatedPodsResources := getAggregatedScheduledPodsResources(args.ScaledAssignment, args.Assignments)
+	aggregatedPodsResources := getAggregatedScheduledPodsResources(args.ScaledAssignment, args.OtherAssignments)
 	//calculate total scheduledResources in terms of normalized resource units using weights
 	var totalNormalizedResourceUnits float64
 	weights, err := l.weightsFn(args.ScaledAssignment.Node.InstanceType)
@@ -82,6 +82,7 @@ func (l LeastCost) Compute(args api.NodeScoreArgs) (api.NodeScore, error) {
 		return api.NodeScore{}, err
 	}
 	return api.NodeScore{
+		ID:                 args.ID,
 		Placement:          args.Placement,
 		Value:              int(math.Round(totalNormalizedResourceUnits * 100 / price)),
 		ScaledNodeResource: args.ScaledAssignment.Node,
@@ -129,7 +130,7 @@ func (l LeastWaste) Compute(args api.NodeScoreArgs) (nodeScore api.NodeScore, er
 		wastage[resourceName] = quantity
 	}
 	//subtract resource requests of pods scheduled on scaled node and existing nodes to find delta
-	aggregatedPodResources := getAggregatedScheduledPodsResources(args.ScaledAssignment, args.Assignments)
+	aggregatedPodResources := getAggregatedScheduledPodsResources(args.ScaledAssignment, args.OtherAssignments)
 	for resourceName, request := range aggregatedPodResources {
 		if waste, found := wastage[resourceName]; found {
 			wastage[resourceName] = waste - request
@@ -148,6 +149,7 @@ func (l LeastWaste) Compute(args api.NodeScoreArgs) (nodeScore api.NodeScore, er
 		}
 	}
 	nodeScore = api.NodeScore{
+		ID:                 args.ID,
 		Placement:          args.Placement,
 		UnscheduledPods:    args.UnscheduledPods,
 		Value:              int(totalNormalizedResourceUnits * 100),
