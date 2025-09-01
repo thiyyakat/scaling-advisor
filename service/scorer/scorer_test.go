@@ -5,9 +5,9 @@ import (
 	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	"github.com/gardener/scaling-advisor/service/api"
 	"github.com/google/go-cmp/cmp"
-	v1 "k8s.io/api/core/v1"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"slices"
 	"testing"
 )
 
@@ -26,9 +26,9 @@ func CreateMockNode(name, instanceType string, cpu, memory int64) api.NodeResour
 	return api.NodeResourceInfo{
 		Name:         name,
 		InstanceType: instanceType,
-		Allocatable: map[v1.ResourceName]int64{
-			v1.ResourceCPU:    cpu,
-			v1.ResourceMemory: memory,
+		Allocatable: map[corev1.ResourceName]int64{
+			corev1.ResourceCPU:    cpu,
+			corev1.ResourceMemory: memory,
 		},
 	}
 }
@@ -40,9 +40,9 @@ func CreateMockPod(name string, cpu, memory int64) api.PodResourceInfo {
 			Name:      name,
 			Namespace: "default",
 		},
-		AggregatedRequests: map[v1.ResourceName]int64{
-			v1.ResourceCPU:    cpu,
-			v1.ResourceMemory: memory,
+		AggregatedRequests: map[corev1.ResourceName]int64{
+			corev1.ResourceCPU:    cpu,
+			corev1.ResourceMemory: memory,
 		},
 	}
 }
@@ -59,10 +59,14 @@ func NewMockInstancePricing() *MockInstancePricing {
 		},
 	}
 }
+
+// Helper function to create mock weights for instance type
+func NewMockWeightsFunc(instanceType string) (map[corev1.ResourceName]float64, error) {
+	return map[corev1.ResourceName]float64{corev1.ResourceCPU: 5, corev1.ResourceMemory: 1}, nil
+}
 func TestLeastWasteScoringStrategy(t *testing.T) {
-	weights := map[v1.ResourceName]float64{v1.ResourceCPU: 5.0, v1.ResourceMemory: 1.0}
 	instancePricing := NewMockInstancePricing()
-	scorer, err := GetNodeScorer(commontypes.LeastWasteNodeScoringStrategy, instancePricing, weights)
+	scorer, err := GetNodeScorer(commontypes.LeastWasteNodeScoringStrategy, instancePricing, NewMockWeightsFunc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,14 +83,13 @@ func TestLeastWasteScoringStrategy(t *testing.T) {
 	}{
 		"pod scheduled on scaled node only": {
 			input: api.NodeScoreArgs{
-				Name:             "testing",
 				Placement:        api.NodePlacementInfo{},
 				ScaledAssignment: &assignment,
 				Assignments:      nil,
 				UnscheduledPods:  nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
-				Name:               "testing",
+				Name:               "",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              700,
@@ -95,7 +98,6 @@ func TestLeastWasteScoringStrategy(t *testing.T) {
 		},
 		"pods scheduled on scaled node and existing node": {
 			input: api.NodeScoreArgs{
-				Name:             "testing",
 				Placement:        api.NodePlacementInfo{},
 				ScaledAssignment: &assignment,
 				Assignments: []api.NodePodAssignment{{
@@ -105,7 +107,7 @@ func TestLeastWasteScoringStrategy(t *testing.T) {
 				UnscheduledPods: nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
-				Name:               "testing",
+				Name:               "",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              0,
@@ -129,9 +131,8 @@ func TestLeastWasteScoringStrategy(t *testing.T) {
 }
 
 func TestLeastCostScoringStrategy(t *testing.T) {
-	weights := map[v1.ResourceName]float64{v1.ResourceCPU: 5.0, v1.ResourceMemory: 1.0}
 	instancePricing := NewMockInstancePricing()
-	scorer, err := GetNodeScorer(commontypes.LeastCostNodeScoringStrategy, instancePricing, weights)
+	scorer, err := GetNodeScorer(commontypes.LeastCostNodeScoringStrategy, instancePricing, NewMockWeightsFunc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,14 +149,12 @@ func TestLeastCostScoringStrategy(t *testing.T) {
 	}{
 		"pod scheduled on scaled node only": {
 			input: api.NodeScoreArgs{
-				Name:             "testing",
 				Placement:        api.NodePlacementInfo{Region: ""},
 				ScaledAssignment: &assignment,
 				Assignments:      nil,
 				UnscheduledPods:  nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
-				Name:               "testing",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              350,
@@ -164,7 +163,6 @@ func TestLeastCostScoringStrategy(t *testing.T) {
 		},
 		"pods scheduled on scaled node and existing node": {
 			input: api.NodeScoreArgs{
-				Name:             "testing",
 				Placement:        api.NodePlacementInfo{Region: ""},
 				ScaledAssignment: &assignment,
 				Assignments: []api.NodePodAssignment{{
@@ -174,7 +172,6 @@ func TestLeastCostScoringStrategy(t *testing.T) {
 				UnscheduledPods: nil},
 			expectedErr: nil,
 			expectedScore: api.NodeScore{
-				Name:               "testing",
 				Placement:          api.NodePlacementInfo{},
 				UnscheduledPods:    nil,
 				Value:              700,
@@ -198,152 +195,210 @@ func TestLeastCostScoringStrategy(t *testing.T) {
 }
 
 func TestSelectMaxAllocatable(t *testing.T) {
-	weights := map[v1.ResourceName]float64{v1.ResourceCPU: 5.0, v1.ResourceMemory: 1.0}
 	instancePricing := NewMockInstancePricing()
 	selector, err := GetNodeScoreSelector(commontypes.LeastCostNodeScoringStrategy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tests := map[string]struct {
-		input           []api.NodeScore
-		expectedErr     error
-		expectedIndexIn []int
+		input       []api.NodeScore
+		expectedErr error
+		expectedIn  []api.NodeScore
 	}{
 		"single node score": {
-			input:           []api.NodeScore{{Name: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
-			expectedErr:     nil,
-			expectedIndexIn: []int{0},
+			input:       []api.NodeScore{{Name: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
+			expectedErr: nil,
+			expectedIn:  []api.NodeScore{{Name: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
 		},
 		"no node score": {
-			input:           []api.NodeScore{},
-			expectedErr:     nil,
-			expectedIndexIn: []int{-1},
+			input:       []api.NodeScore{},
+			expectedErr: api.ErrNoWinningNodeScore,
+			expectedIn:  []api.NodeScore{},
 		},
 		"different allocatables": {
 			input: []api.NodeScore{
 				{
-					Name:               "testing",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "testing2",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode2", "instance-a-2", 4, 8),
 				}},
-			expectedErr:     nil,
-			expectedIndexIn: []int{1},
+			expectedErr: nil,
+			expectedIn: []api.NodeScore{{
+				Name:               "",
+				Placement:          api.NodePlacementInfo{},
+				UnscheduledPods:    nil,
+				Value:              1,
+				ScaledNodeResource: CreateMockNode("simNode2", "instance-a-2", 4, 8),
+			}},
 		},
 		"identical allocatables": {
 			input: []api.NodeScore{
 				{
-					Name:               "testing",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "testing2",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode2", "instance-a-2", 2, 4),
 				},
 			},
-			expectedErr:     nil,
-			expectedIndexIn: []int{0, 1},
+			expectedErr: nil,
+			expectedIn: []api.NodeScore{
+				{
+					Name:               "",
+					Placement:          api.NodePlacementInfo{},
+					UnscheduledPods:    nil,
+					Value:              1,
+					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
+				{
+					Name:               "",
+					Placement:          api.NodePlacementInfo{},
+					UnscheduledPods:    nil,
+					Value:              1,
+					ScaledNodeResource: CreateMockNode("simNode2", "instance-a-2", 2, 4),
+				},
+			},
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			index, err := selector(tc.input, weights, instancePricing)
-			errDiff := cmp.Diff(tc.expectedErr, err)
-			if !slices.Contains(tc.expectedIndexIn, index) {
-				t.Fatalf("Index: %v not in list of expected indices: %v", index, tc.expectedIndexIn)
+			winningNodeScore, err := selector(tc.input, NewMockWeightsFunc, instancePricing)
+			errDiff := cmp.Diff(tc.expectedErr, err, cmpopts.EquateErrors())
+			found := false
+			if winningNodeScore == nil && len(tc.expectedIn) == 0 {
+				found = true
+			} else {
+				for _, expectedNodeScore := range tc.expectedIn {
+					if cmp.Equal(*winningNodeScore, expectedNodeScore) {
+						found = true
+						break
+					}
+				}
+			}
+			if found == false {
+				t.Fatalf("Winning Node Score not returned. Expected winning node score to be in: %v, got: %v", tc.expectedIn, winningNodeScore)
 			}
 			if errDiff != "" {
 				t.Fatalf("Difference: %s", errDiff)
 			}
 		})
 	}
-
 }
 
 func TestSelectMinPrice(t *testing.T) {
-	weights := map[v1.ResourceName]float64{v1.ResourceCPU: 5.0, v1.ResourceMemory: 1.0}
 	instancePricing := NewMockInstancePricing()
 	selector, err := GetNodeScoreSelector(commontypes.LeastWasteNodeScoringStrategy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tests := map[string]struct {
-		input           []api.NodeScore
-		expectedErr     error
-		expectedIndexIn []int
+		input       []api.NodeScore
+		expectedErr error
+		expectedIn  []api.NodeScore
 	}{
 		"single node score": {
-			input:           []api.NodeScore{{Name: "testing", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
-			expectedErr:     nil,
-			expectedIndexIn: []int{0},
+			input:       []api.NodeScore{{Name: "", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
+			expectedErr: nil,
+			expectedIn:  []api.NodeScore{{Name: "", Placement: api.NodePlacementInfo{}, UnscheduledPods: nil, Value: 1, ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
 		},
 		"no node score": {
-			input:           []api.NodeScore{},
-			expectedErr:     nil,
-			expectedIndexIn: []int{-1},
+			input:       []api.NodeScore{},
+			expectedErr: api.ErrNoWinningNodeScore,
+			expectedIn:  []api.NodeScore{},
 		},
 		"different prices": {
 			input: []api.NodeScore{
 				{
-					Name:               "testing",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "testing2",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode2", "instance-a-2", 1, 2),
 				},
 			},
-			expectedErr:     nil,
-			expectedIndexIn: []int{0},
+			expectedErr: nil,
+			expectedIn: []api.NodeScore{
+				{
+					Name:               "",
+					Placement:          api.NodePlacementInfo{},
+					UnscheduledPods:    nil,
+					Value:              1,
+					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)}},
 		},
 		"identical prices": {
 			input: []api.NodeScore{
 				{
-					Name:               "testing",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
 				{
-					Name:               "testing2",
+					Name:               "",
 					Placement:          api.NodePlacementInfo{},
 					UnscheduledPods:    nil,
 					Value:              1,
 					ScaledNodeResource: CreateMockNode("simNode2", "instance-c-1", 1, 2),
 				},
 			},
-			expectedErr:     nil,
-			expectedIndexIn: []int{0, 1},
+			expectedErr: nil,
+			expectedIn: []api.NodeScore{
+				{
+					Name:               "",
+					Placement:          api.NodePlacementInfo{},
+					UnscheduledPods:    nil,
+					Value:              1,
+					ScaledNodeResource: CreateMockNode("simNode1", "instance-a-1", 2, 4)},
+				{
+					Name:               "",
+					Placement:          api.NodePlacementInfo{},
+					UnscheduledPods:    nil,
+					Value:              1,
+					ScaledNodeResource: CreateMockNode("simNode2", "instance-c-1", 1, 2),
+				},
+			},
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			index, err := selector(tc.input, weights, instancePricing)
-			errDiff := cmp.Diff(tc.expectedErr, err)
-			if !slices.Contains(tc.expectedIndexIn, index) {
-				t.Fatalf("Index: %v not in list of expected indices: %v", index, tc.expectedIndexIn)
+			winningNodeScore, err := selector(tc.input, NewMockWeightsFunc, instancePricing)
+			errDiff := cmp.Diff(tc.expectedErr, err, cmpopts.EquateErrors())
+			found := false
+			if winningNodeScore == nil && len(tc.expectedIn) == 0 {
+				found = true
+			} else {
+				for _, expectedNodeScore := range tc.expectedIn {
+					if cmp.Equal(*winningNodeScore, expectedNodeScore) {
+						found = true
+						break
+					}
+				}
+			}
+			if found == false {
+				t.Fatalf("Winning Node Score not returned. Expected winning node score to be in: %v, got: %v", tc.expectedIn, winningNodeScore)
 			}
 			if errDiff != "" {
 				t.Fatalf("Difference: %s", errDiff)
 			}
 		})
 	}
-
 }
