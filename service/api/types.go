@@ -240,7 +240,7 @@ type NodeScoreArgs struct {
 	// or it is a winning simulated Node from a previous run.
 	Assignments []NodePodAssignment
 	// UnscheduledPods is the slice of unscheduled pods that remain unscheduled after simulation is completed.
-	UnscheduledPods []PodResourceInfo
+	UnscheduledPods []types.NamespacedName
 }
 
 // NodeScore to be documented later.
