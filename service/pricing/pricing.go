@@ -5,85 +5,60 @@ import (
 	"fmt"
 	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	"github.com/gardener/scaling-advisor/service/api"
-	"math"
 	"os"
 )
 
-var _ api.GetInstancePricing = GetInstancePricing
+var _ api.GetProviderInstanceTypeInfoAccessFunc = GetInstancePricing
 
-func GetInstancePricing(provider commontypes.CloudProvider, pricingDataPath string) (api.InstancePricing, error) {
-	var ip InstancePricing
-
-	ip.CloudProvider = provider
-
-	//Read pricing data from json file and add it to map
+func GetInstancePricing(provider commontypes.CloudProvider, pricingDataPath string) (api.InstanceTypeInfoAccess, error) {
 	data, err := os.ReadFile(pricingDataPath)
 	if err != nil {
 		return nil, err
 	}
+	return GetInstancePricingFromData(provider, data)
+}
 
-	var jsonEntries []jsonInstance
+func GetInstancePricingFromData(provider commontypes.CloudProvider, data []byte) (api.InstanceTypeInfoAccess, error) {
+	var ip infoAccess
+	var err error
+	ip.CloudProvider = provider
+	ip.infosByPriceKey, err = parseInstanceTypeInfos(data)
+	return &ip, err
+}
+
+func parseInstanceTypeInfos(data []byte) (map[api.PriceKey]api.InstanceTypeInfo, error) {
+	var jsonEntries []api.InstanceTypeInfo
 	//consider using streaming decoder instead
-	err = json.Unmarshal(data, &jsonEntries)
+	err := json.Unmarshal(data, &jsonEntries)
 	if err != nil {
 		return nil, err
 	}
-
-	ip.instancePrice = make(map[InstanceType]InstanceDetails)
-	for _, entry := range jsonEntries {
-		key := InstanceType{
-			instanceName: entry.InstanceName,
-			region:       entry.Region,
+	infosByPriceKey := make(map[api.PriceKey]api.InstanceTypeInfo, len(jsonEntries))
+	for _, info := range jsonEntries {
+		key := api.PriceKey{
+			Name:   info.Name,
+			Region: info.Region,
 		}
-		value := InstanceDetails{
-			VCPU:        entry.VCPU,
-			Memory:      entry.Memory,
-			HourlyPrice: entry.HourlyPrice,
-			OS:          entry.OS,
-		}
-		ip.instancePrice[key] = value
+		infosByPriceKey[key] = info
 	}
-
-	return ip, nil
+	return infosByPriceKey, nil
 }
 
-var _ api.InstancePricing = (*InstancePricing)(nil)
+var _ api.InstanceTypeInfoAccess = (*infoAccess)(nil)
 
-type InstancePricing struct {
-	CloudProvider commontypes.CloudProvider
-	//TODO put pricing data in-memory.
-	instancePrice map[InstanceType]InstanceDetails
+type infoAccess struct {
+	CloudProvider   commontypes.CloudProvider
+	infosByPriceKey map[api.PriceKey]api.InstanceTypeInfo
 }
 
-type InstanceType struct {
-	instanceName string
-	region       string
-}
-
-type InstanceDetails struct {
-	//TODO: Are these extra fields required, or is price sufficient?
-	VCPU        int32
-	Memory      float64
-	HourlyPrice float64
-	OS          string
-}
-
-type jsonInstance struct {
-	InstanceName string  `json:"instanceName"`
-	Region       string  `json:"region"`
-	VCPU         int32   `json:"VCPU"`
-	Memory       float64 `json:"memory"`
-	HourlyPrice  float64 `json:"hourlyPrice"`
-	OS           string  `json:"os"`
-}
-
-func (a InstancePricing) GetPrice(region, instanceType string) (float64, error) {
-	price, ok := a.instancePrice[InstanceType{
-		instanceName: instanceType,
-		region:       region,
+func (a infoAccess) GetInfo(region, instanceType string) (info api.InstanceTypeInfo, err error) {
+	info, ok := a.infosByPriceKey[api.PriceKey{
+		Name:   instanceType,
+		Region: region,
 	}]
 	if ok {
-		return price.HourlyPrice, nil
+		return
 	}
-	return math.MaxFloat64, fmt.Errorf("error: No instance pricing data found for instanceType: %s in region: %s", instanceType, region)
+	err = fmt.Errorf("no instance type info found for instanceType %q in region %q ", instanceType, region)
+	return
 }

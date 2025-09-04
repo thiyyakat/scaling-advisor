@@ -18,14 +18,14 @@ type defaultScalingAdvisor struct {
 	minKAPIConfig     mkapi.MinKAPIConfig
 	minKAPIServer     mkapi.Server
 	schedulerLauncher api.SchedulerLauncher
-	pricer            api.InstancePricing
+	pricer            api.InstanceTypeInfoAccess
 	weighsFn          api.GetWeightsFunc
 	scorer            api.NodeScorer
 	selector          api.NodeScoreSelector
 }
 
 func New(config api.ScalingAdvisorServiceConfig,
-	pricer api.InstancePricing,
+	pricer api.InstanceTypeInfoAccess,
 	weights api.GetWeightsFunc,
 	scorer api.NodeScorer,
 	selector api.NodeScoreSelector) (api.ScalingAdvisorService, error) {

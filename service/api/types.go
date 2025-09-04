@@ -223,12 +223,29 @@ type ResourceMeta struct {
 	DeletionTimestamp time.Time
 }
 
-type InstancePricing interface {
-	GetPrice(region, instanceType string) (float64, error)
+type InstanceTypeInfo struct {
+	Name        string  `json:"name"`
+	Region      string  `json:"region"`
+	VCPU        int32   `json:"VCPU"`
+	Memory      float64 `json:"memory"`
+	HourlyPrice float64 `json:"hourlyPrice"`
+	OS          string  `json:"os"`
 }
-type GetInstancePricing func(provider commontypes.CloudProvider, pricingDataPath string) (InstancePricing, error)
+
+// PriceKey represents the key for a instance type price within a cloud provider.
+type PriceKey struct {
+	Name   string
+	Region string
+}
+type InstanceTypeInfoAccess interface {
+	// GetInfo gets the InstanceTypeInfo (whicn includes price) for the given region and instance type.
+	// TODO: should we also pass OS name here ? if so, we need to need to change ClusterScalingConstraint.
+	GetInfo(region, instanceTypeName string) (InstanceTypeInfo, error)
+}
+type GetProviderInstanceTypeInfoAccessFunc func(provider commontypes.CloudProvider, instanceTypeInfoPath string) (InstanceTypeInfoAccess, error)
 
 type NodeScorer interface {
+	// Compute computes the node score given the NodeScoreArgs. On failure, it must return an error with the sentinel error api.ErrComputeNodeScore
 	Compute(args NodeScoreArgs) (NodeScore, error)
 }
 type NodeScoreArgs struct {
@@ -257,7 +274,7 @@ type NodeScore struct {
 	ScaledNodeResource NodeResourceInfo
 }
 type GetWeightsFunc func(instanceType string) (map[corev1.ResourceName]float64, error)
-type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing, weightsFn GetWeightsFunc) (NodeScorer, error)
+type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instanceTypeInfoAccess InstanceTypeInfoAccess, weightsFn GetWeightsFunc) (NodeScorer, error)
 type GetNodeScoreSelector func(scoringStrategy commontypes.NodeScoringStrategy) (NodeScoreSelector, error)
 
 type PodResourceInfo struct {
@@ -298,7 +315,7 @@ type NodePodAssignment struct {
 
 // NodeScoreSelector selects the winning NodeScore amongst the NodeScores of a given simulation pass and returns the pointer to the same.
 // If there is no winning node score amongst the group, then it returns nil.
-type NodeScoreSelector func(groupNodeScores []NodeScore, weightsFn GetWeightsFunc, pricing InstancePricing) (winningNodeScore *NodeScore, err error)
+type NodeScoreSelector func(groupNodeScores []NodeScore, weightsFn GetWeightsFunc, pricing InstanceTypeInfoAccess) (winningNodeScore *NodeScore, err error)
 
 // Simulation represents an activity that performs valid unscheduled pod to ready node assignments on a minkapi View.
 // A simulation implementation may use a k8s scheduler - either embedded or external to do this, or it may form a SAT/MIP model
