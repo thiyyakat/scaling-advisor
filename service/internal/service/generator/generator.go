@@ -20,7 +20,7 @@ type Generator struct {
 }
 
 type Args struct {
-	Pricer            api.InstancePricing
+	Pricer            api.InstanceTypeInfoAccess
 	WeightsFn         api.GetWeightsFunc
 	Scorer            api.NodeScorer
 	Selector          api.NodeScoreSelector
@@ -116,11 +116,12 @@ func (g *Generator) RunPass(groups []api.SimulationGroup) (winnerNodeScores []ap
 	return
 }
 
-func computeSimGroupScores(pricer api.InstancePricing, weightsFun api.GetWeightsFunc, scorer api.NodeScorer, selector api.NodeScoreSelector, groupResult *api.SimGroupRunResult) (*api.SimGroupScores, error) {
+func computeSimGroupScores(pricer api.InstanceTypeInfoAccess, weightsFun api.GetWeightsFunc, scorer api.NodeScorer, selector api.NodeScoreSelector, groupResult *api.SimGroupRunResult) (*api.SimGroupScores, error) {
 	var nodeScores []api.NodeScore
 	for _, sr := range groupResult.SimulationResults {
 		nodeScore, err := scorer.Compute(sr.NodeScoreArgs)
 		if err != nil {
+			// TODO: fix this when compute already returns a error with a sentinel wrapped error.
 			return nil, fmt.Errorf("%w: node scoring failed for simulation %q of group %q: %w", api.ErrComputeNodeScore, sr.Name, groupResult.Name, err)
 		}
 		nodeScores = append(nodeScores, nodeScore)

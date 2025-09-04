@@ -31,6 +31,8 @@ var (
 	ErrNoScalingAdvice                = errors.New("no scaling advice")
 	ErrUnsupportedNodeScoringStrategy = errors.New("unsupported node scoring strategy")
 	ErrUnsupportedCloudProvider       = errors.New("unsupported cloud provider")
+
+	ErrLoadInstanceTypeInfo = errors.New("cannot load provider instance type info")
 )
 
 func AsGenerateError(id string, correlationID string, err error) error {

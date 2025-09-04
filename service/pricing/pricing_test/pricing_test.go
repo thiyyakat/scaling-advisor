@@ -1,20 +1,25 @@
-package pricing
+package pricing_test
 
 import (
+	"github.com/gardener/scaling-advisor/service/pricing/testutil"
 	"testing"
 )
 
 func TestGetInstancePricing(t *testing.T) {
-	instancePrices, err := GetInstancePricing("aws", "test_instances.json")
+	access, err := testutil.LoadTestInstanceTypeInfoAccess()
 	if err != nil {
-		t.Errorf("error creating instance pricing object: %v", err)
+		t.Error(err)
+		return
 	}
-
-	_, err = instancePrices.GetPrice("region_a", "instance_type_1")
+	if access == nil {
+		t.Error("access is nil")
+		return
+	}
+	_, err = access.GetInfo("region_a", "instance_type_1")
 	if err != nil {
 		t.Error("failed to fetch instance price for instance_type_1")
 	}
-	_, err = instancePrices.GetPrice("region_b", "instance_type_2")
+	_, err = access.GetInfo("region_b", "instance_type_2")
 	if err != nil {
 		t.Error("failed to fetch instance price for instance_type_2")
 	}
@@ -33,14 +38,15 @@ func TestGetPrice(t *testing.T) {
 		{"invalid region but valid instance", "invalid_region", "instance_type_2", true},
 	}
 
-	instancePrices, err := GetInstancePricing("aws", "test_instances.json")
+	access, err := testutil.LoadTestInstanceTypeInfoAccess()
 	if err != nil {
-		t.Error("error is not nil")
+		t.Error(err)
+		return
 	}
 
 	for _, entry := range entries {
 		t.Run(entry.name, func(t *testing.T) {
-			_, err := instancePrices.GetPrice(entry.region, entry.instanceType)
+			_, err := access.GetInfo(entry.region, entry.instanceType)
 			if entry.error && err == nil {
 				t.Error("expected error, found no error instead")
 			} else if !entry.error && err != nil {

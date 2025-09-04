@@ -1,0 +1,58 @@
+[
+  {
+    "name": "instance_type_1",
+    "region": "region_a",
+    "memory": 100,
+    "vcpu": 2,
+    "hourlyPrice": 105,
+    "os": "linux"
+  },
+  {
+    "name": "instance_type_2",
+    "region": "region_b",
+    "memory": 50.0,
+    "vcpu": 1,
+    "hourlyPrice": 206.87,
+    "os": "windows"
+  },
+  {
+    "name": "instance-a-1",
+    "region": "s",
+    "memory": 12.0,
+    "vcpu": 1,
+    "hourlyPrice": 1.0,
+    "os": "linux"
+  },
+  {
+    "name": "instance-a-2",
+    "region": "s",
+    "memory": 12.0,
+    "vcpu": 1,
+    "hourlyPrice": 2.0,
+    "os": "linux"
+  },
+  {
+    "name": "instance-b-1",
+    "region": "s",
+    "memory": 12.0,
+    "vcpu": 1,
+    "hourlyPrice": 4.0,
+    "os": "linux"
+  },
+  {
+    "name": "instance-b-2",
+    "region": "s",
+    "memory": 12.0,
+    "vcpu": 1,
+    "hourlyPrice": 8.0,
+    "os": "linux"
+  },
+  {
+    "name": "instance-c-1",
+    "region": "s",
+    "memory": 12.0,
+    "vcpu": 1,
+    "hourlyPrice": 1.0,
+    "os": "linux"
+  }
+]
