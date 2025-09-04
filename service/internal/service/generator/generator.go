@@ -20,6 +20,8 @@ type Generator struct {
 }
 
 type Args struct {
+	Pricer            api.InstancePricing
+	WeightsFn         api.GetWeightsFunc
 	Scorer            api.NodeScorer
 	Selector          api.NodeScoreSelector
 	CreateSimFn       api.CreateSimulationFunc
@@ -93,7 +95,7 @@ func (g *Generator) RunPass(groups []api.SimulationGroup) (winnerNodeScores []ap
 		if err != nil {
 			return
 		}
-		groupScores, err = computeSimGroupScores(g.args.Scorer, g.args.Selector, &groupRunResult)
+		groupScores, err = computeSimGroupScores(g.args.Pricer, g.args.WeightsFn, g.args.Scorer, g.args.Selector, &groupRunResult)
 		if err != nil {
 			return
 		}
@@ -102,20 +104,19 @@ func (g *Generator) RunPass(groups []api.SimulationGroup) (winnerNodeScores []ap
 		//	g.log.Info("simulation group did not produce any winning score. Skipping this group.", "simulationGroupName", groupRunResult.Name)
 		//	continue
 		//}
-		groupWinner := groupScores.GetWinner()
-		if groupWinner == nil {
+		if groupScores.WinnerNodeScore == nil {
 			g.log.Info("simulation group did not produce any winning score. Skipping this group.", "simulationGroupName", groupRunResult.Name)
 			continue
 		}
-		winnerNodeScores = append(winnerNodeScores, *groupWinner)
-		if len(groupWinner.UnscheduledPods) == 0 {
+		winnerNodeScores = append(winnerNodeScores, *groupScores.WinnerNodeScore)
+		if len(groupScores.WinnerNodeScore.UnscheduledPods) == 0 {
 			g.log.Info("simulation group winner has left NO unscheduled pods. No need to continue to next group", "simulationGroupName", groupRunResult.Name)
 		}
 	}
 	return
 }
 
-func computeSimGroupScores(scorer api.NodeScorer, selector api.NodeScoreSelector, groupResult *api.SimGroupRunResult) (*api.SimGroupScores, error) {
+func computeSimGroupScores(pricer api.InstancePricing, weightsFun api.GetWeightsFunc, scorer api.NodeScorer, selector api.NodeScoreSelector, groupResult *api.SimGroupRunResult) (*api.SimGroupScores, error) {
 	var nodeScores []api.NodeScore
 	for _, sr := range groupResult.SimulationResults {
 		nodeScore, err := scorer.Compute(sr.NodeScoreArgs)
@@ -124,29 +125,29 @@ func computeSimGroupScores(scorer api.NodeScorer, selector api.NodeScoreSelector
 		}
 		nodeScores = append(nodeScores, nodeScore)
 	}
-	winnerScoreIndex, err := selector(nodeScores)
+	winnerNodeScore, err := selector(nodeScores, weightsFun, pricer)
 	if err != nil {
 		return nil, fmt.Errorf("%w: node score selection failed for group %q: %w", api.ErrSelectNodeScore, groupResult.Name, err)
 	}
 	//if winnerScoreIndex < 0 {
 	//	return nil, nil //No winning score for this group
 	//}
-	winnerNode := getScaledNodeOfWinner(groupResult.SimulationResults, winnerScoreIndex)
+	winnerNode := getScaledNodeOfWinner(groupResult.SimulationResults, winnerNodeScore)
 	//if winnerNode == nil {
 	//	return nil, fmt.Errorf("%w: winner node not found for group %q", api.ErrSelectNodeScore, groupResult.Name)
 	//}
 	return &api.SimGroupScores{
-		AllNodeScores:    nodeScores,
-		WinnerScoreIndex: winnerScoreIndex,
-		WinnerNode:       winnerNode,
+		AllNodeScores:   nodeScores,
+		WinnerNodeScore: winnerNodeScore,
+		WinnerNode:      winnerNode,
 	}, nil
 }
-func getScaledNodeOfWinner(results []api.SimRunResult, winnerScoreIndex int) *corev1.Node {
+func getScaledNodeOfWinner(results []api.SimRunResult, winnerNodeScore *api.NodeScore) *corev1.Node {
 	var (
 		winnerNode *corev1.Node
 	)
 	for _, sr := range results {
-		if sr.NodeScoreArgs.Name == results[winnerScoreIndex].NodeScoreArgs.Name {
+		if sr.NodeScoreArgs.ID == winnerNodeScore.ID {
 			winnerNode = sr.ScaledNode
 			break
 		}
@@ -176,7 +177,7 @@ func (g *Generator) createSimulationGroups() ([]api.SimulationGroup, error) {
 }
 
 func (g *Generator) createSimulation(simulationName string, nodePool *sacorev1alpha1.NodePool, nodeTemplateName string, zone string) (api.Simulation, error) {
-	simView, err := g.minKAPIServer.GetSandboxView()
+	simView, err := g.minKAPIServer.GetSandboxView(g.ctx, simulationName)
 	if err != nil {
 		return nil, err
 	}

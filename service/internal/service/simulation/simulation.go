@@ -11,6 +11,7 @@ import (
 	"github.com/gardener/scaling-advisor/service/api"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"maps"
 	"slices"
 )
@@ -105,11 +106,11 @@ func (s *defaultSimulation) Run(ctx context.Context) (err error) {
 		Name:       s.name,
 		ScaledNode: s.state.simNode,
 		NodeScoreArgs: api.NodeScoreArgs{
-			Name:             s.name,
+			ID:               s.name,
 			Placement:        s.getScaledNodePlacementInfo(),
 			ScaledAssignment: s.getScaledNodeAssignment(),
-			UnscheduledPods:  s.state.unscheduledPods,
-			Assignments:      assignments,
+			UnscheduledPods:  getNamespacesNames(s.state.unscheduledPods),
+			OtherAssignments: assignments,
 		},
 	}
 	return
@@ -132,16 +133,13 @@ func (s *defaultSimulation) getScaledNodeAssignment() *api.NodePodAssignment {
 }
 
 func (s *defaultSimulation) launchSchedulerForSimulation(ctx context.Context, simView mkapi.View) (api.SchedulerHandle, error) {
-	clientFacades, err := simView.GetNetworkClientFacades()
+	clientFacades, err := simView.GetClientFacades()
 	if err != nil {
 		return nil, err
 	}
 	schedLaunchParams := &api.SchedulerLaunchParams{
-		Client:             clientFacades.Client,
-		DynClient:          clientFacades.DynClient,
-		InformerFactory:    clientFacades.InformerFactory,
-		DynInformerFactory: clientFacades.DynInformerFactory,
-		EventSink:          simView.GetEventSink(),
+		ClientFacades: clientFacades,
+		EventSink:     simView.GetEventSink(),
 	}
 	return s.args.SchedulerLauncher.Launch(ctx, schedLaunchParams)
 }
@@ -181,7 +179,7 @@ func (s *defaultSimulation) getAssignments() ([]api.NodePodAssignment, error) {
 	}
 	var assignments []api.NodePodAssignment
 	for _, node := range nodes {
-		nodeResources := getNodeResourceInfo(node)
+		nodeResources := getNodeResourceInfo(&node)
 		podResources := s.state.scheduledPods[node.Name]
 		assignments = append(assignments, api.NodePodAssignment{
 			Node:          nodeResources,
@@ -204,4 +202,12 @@ func getNodeResourceInfo(node *corev1.Node) api.NodeResourceInfo {
 		Capacity:     objutil.ResourceListToMapInt64(node.Status.Capacity),
 		Allocatable:  objutil.ResourceListToMapInt64(node.Status.Allocatable),
 	}
+}
+
+func getNamespacesNames(pods []api.PodResourceInfo) []types.NamespacedName {
+	namespacesNames := make([]types.NamespacedName, 0, len(pods))
+	for _, pod := range pods {
+		namespacesNames = append(namespacesNames, pod.NamespacedName)
+	}
+	return namespacesNames
 }

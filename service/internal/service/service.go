@@ -18,11 +18,17 @@ type defaultScalingAdvisor struct {
 	minKAPIConfig     mkapi.MinKAPIConfig
 	minKAPIServer     mkapi.Server
 	schedulerLauncher api.SchedulerLauncher
+	pricer            api.InstancePricing
+	weighsFn          api.GetWeightsFunc
 	scorer            api.NodeScorer
 	selector          api.NodeScoreSelector
 }
 
-func New(config api.ScalingAdvisorServiceConfig, scorer api.NodeScorer, selector api.NodeScoreSelector) (api.ScalingAdvisorService, error) {
+func New(config api.ScalingAdvisorServiceConfig,
+	pricer api.InstancePricing,
+	weights api.GetWeightsFunc,
+	scorer api.NodeScorer,
+	selector api.NodeScoreSelector) (api.ScalingAdvisorService, error) {
 	schedulerLauncher, err := scheduler.NewLauncher(config.SchedulerConfigPath, config.MaxConcurrentSimulations)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", api.ErrInitFailed, err)
@@ -30,6 +36,8 @@ func New(config api.ScalingAdvisorServiceConfig, scorer api.NodeScorer, selector
 	return &defaultScalingAdvisor{
 		minKAPIConfig:     config.MinKAPIConfig,
 		schedulerLauncher: schedulerLauncher,
+		pricer:            pricer,
+		weighsFn:          weights,
 		scorer:            scorer,
 		selector:          selector,
 	}, nil
@@ -74,6 +82,8 @@ func (d *defaultScalingAdvisor) GenerateScalingAdvice(ctx context.Context, reque
 
 	genCtx := logr.NewContext(ctx, logr.FromContextOrDiscard(ctx).WithValues("requestID", request.ID, "correlationID", request.CorrelationID))
 	g := generator.New(genCtx, &generator.Args{
+		Pricer:            d.pricer,
+		WeightsFn:         d.weighsFn,
 		Scorer:            d.scorer,
 		Selector:          d.selector,
 		CreateSimFn:       simulation.New,
