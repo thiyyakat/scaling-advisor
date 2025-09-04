@@ -232,32 +232,32 @@ type NodeScorer interface {
 	Compute(args NodeScoreArgs) (NodeScore, error)
 }
 type NodeScoreArgs struct {
-	// Name that must given to the NodeScore produced by the NodeScorer
-	Name string
+	// ID that must be given to the NodeScore produced by the NodeScorer
+	ID string
 	// Placement represents the placement information for the Node.
 	Placement NodePlacementInfo
 	// ScaledAssignment represents the assignment of the scaled Node for the current run.
 	ScaledAssignment *NodePodAssignment
-	// Assignments represent the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
+	// OtherAssignments represent the assignment of unscheduled Pods to either an existing Node which is part of the ClusterSnapshot
 	// or it is a winning simulated Node from a previous run.
-	Assignments []NodePodAssignment
+	OtherAssignments []NodePodAssignment
 	// UnscheduledPods is the slice of unscheduled pods that remain unscheduled after simulation is completed.
-	UnscheduledPods []PodResourceInfo
+	UnscheduledPods []types.NamespacedName
 }
 
 // NodeScore to be documented later.
 type NodeScore struct {
-	// Name is the name for this node score
-	Name string
+	// ID uniquely identifies this NodeScore
+	ID string
 	// Placement represents the placement information for the Node.
 	Placement       NodePlacementInfo
-	UnscheduledPods []PodResourceInfo
+	UnscheduledPods []types.NamespacedName
 	// Value is the score value for this Node.
 	Value              int
 	ScaledNodeResource NodeResourceInfo
 }
-
-type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing, weights map[corev1.ResourceName]float64) (NodeScorer, error)
+type GetWeightsFunc func(instanceType string) (map[corev1.ResourceName]float64, error)
+type GetNodeScorer func(scoringStrategy commontypes.NodeScoringStrategy, instancePricing InstancePricing, weightsFn GetWeightsFunc) (NodeScorer, error)
 type GetNodeScoreSelector func(scoringStrategy commontypes.NodeScoringStrategy) (NodeScoreSelector, error)
 
 type PodResourceInfo struct {
@@ -296,9 +296,9 @@ type NodePodAssignment struct {
 	ScheduledPods []PodResourceInfo
 }
 
-// NodeScoreSelector selects the winning NodeScore amongst the NodeScores of a given simulation pass and returns its index.
-// If there is no winning node score amongst the group, then it returns -1.
-type NodeScoreSelector func(groupNodeScores []NodeScore) (winningIndex int, err error)
+// NodeScoreSelector selects the winning NodeScore amongst the NodeScores of a given simulation pass and returns the pointer to the same.
+// If there is no winning node score amongst the group, then it returns nil.
+type NodeScoreSelector func(groupNodeScores []NodeScore, weightsFn GetWeightsFunc, pricing InstancePricing) (winningNodeScore *NodeScore, err error)
 
 // Simulation represents an activity that performs valid unscheduled pod to ready node assignments on a minkapi View.
 // A simulation implementation may use a k8s scheduler - either embedded or external to do this, or it may form a SAT/MIP model
