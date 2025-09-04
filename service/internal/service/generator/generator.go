@@ -27,7 +27,7 @@ type Args struct {
 	CreateSimFn       api.CreateSimulationFunc
 	CreateSimGroupsFn api.CreateSimulationGroupsFunc
 	Request           api.ScalingAdviceRequest
-	ResponseFn        api.ScalingAdviceResponseFn
+	EventChannel      chan api.ScalingAdviceEvent
 }
 
 func New(ctx context.Context, args *Args) *Generator {
@@ -42,10 +42,17 @@ func (g *Generator) populateBaseView() error {
 	return nil
 }
 
-func (g *Generator) Generate() (err error) {
-	defer func() {
-		err = api.AsGenerateError(g.args.Request.ID, g.args.Request.CorrelationID, err)
-	}()
+func (g *Generator) Generate() {
+	err := g.doGenerate()
+	if err != nil {
+		g.args.EventChannel <- api.ScalingAdviceEvent{
+			Err: api.AsGenerateError(g.args.Request.ID, g.args.Request.CorrelationID, err),
+		}
+		return
+	}
+}
+
+func (g *Generator) doGenerate() (err error) {
 	if err = g.populateBaseView(); err != nil {
 		return
 	}
@@ -79,10 +86,10 @@ func (g *Generator) Generate() (err error) {
 	}
 
 	//for _, wns := range winnerNodeScores {
-	//	 TODO: create ScaleItems and ScalingAdvice and invoke response function
+	//	 TODO: create ScaleItems and ScalingAdvice and ScaleEvent and sent on event channel
 	//}
-
 	return nil
+
 }
 
 func (g *Generator) RunPass(groups []api.SimulationGroup) (winnerNodeScores []api.NodeScore, unscheduledPods []api.PodResourceInfo, err error) {

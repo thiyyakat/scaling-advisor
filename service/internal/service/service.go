@@ -67,31 +67,31 @@ func (d *defaultScalingAdvisor) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (d *defaultScalingAdvisor) GenerateScalingAdvice(ctx context.Context, request api.ScalingAdviceRequest, responseFn api.ScalingAdviceResponseFn) (err error) {
-	// wraps all errors with api.ErrGenScalingAdvice before return the error if any.
-	defer func() {
-		if err != nil {
-			err = api.AsGenerateError(request.ID, request.CorrelationID, err)
+func (d *defaultScalingAdvisor) GenerateAdvice(ctx context.Context, request api.ScalingAdviceRequest) <-chan api.ScalingAdviceEvent {
+	eventCh := make(chan api.ScalingAdviceEvent)
+	go func() {
+		unscheduledPods := getPodResourceInfos(request.Snapshot.GetUnscheduledPods())
+		if len(unscheduledPods) == 0 {
+			err := api.AsGenerateError(request.ID, request.CorrelationID, fmt.Errorf("%w: no unscheduled pods found", api.ErrNoUnscheduledPods))
+			eventCh <- api.ScalingAdviceEvent{
+				Err: err,
+			}
+			return
 		}
+		genCtx := logr.NewContext(ctx, logr.FromContextOrDiscard(ctx).WithValues("requestID", request.ID, "correlationID", request.CorrelationID))
+		g := generator.New(genCtx, &generator.Args{
+			Pricer:            d.pricer,
+			WeightsFn:         d.weighsFn,
+			Scorer:            d.scorer,
+			Selector:          d.selector,
+			CreateSimFn:       simulation.New,
+			CreateSimGroupsFn: simulation.CreateSimulationGroups,
+			Request:           request,
+			EventChannel:      eventCh,
+		})
+		g.Generate()
 	}()
-	unscheduledPods := getPodResourceInfos(request.Snapshot.GetUnscheduledPods())
-	if len(unscheduledPods) == 0 {
-		err = api.ErrNoUnscheduledPods
-		return
-	}
-
-	genCtx := logr.NewContext(ctx, logr.FromContextOrDiscard(ctx).WithValues("requestID", request.ID, "correlationID", request.CorrelationID))
-	g := generator.New(genCtx, &generator.Args{
-		Pricer:            d.pricer,
-		WeightsFn:         d.weighsFn,
-		Scorer:            d.scorer,
-		Selector:          d.selector,
-		CreateSimFn:       simulation.New,
-		CreateSimGroupsFn: simulation.CreateSimulationGroups,
-		Request:           request,
-		ResponseFn:        responseFn,
-	})
-	return g.Generate()
+	return eventCh
 }
 
 func getPodResourceInfos(podInfos []api.PodInfo) []api.PodResourceInfo {
