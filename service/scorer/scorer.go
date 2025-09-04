@@ -68,7 +68,7 @@ func (l LeastCost) Compute(args api.NodeScoreArgs) (api.NodeScore, error) {
 	aggregatedPodsResources := getAggregatedScheduledPodsResources(args.ScaledAssignment, args.OtherAssignments)
 	//calculate total scheduledResources in terms of normalized resource units using weights
 	var totalNormalizedResourceUnits float64
-	weights, err := l.weightsFn(args.ScaledAssignment.Node.InstanceType)
+	weights, err := l.weightsFn(args.Placement.InstanceType)
 	for resourceName, quantity := range aggregatedPodsResources {
 		if weight, found := weights[resourceName]; !found {
 			continue
@@ -77,7 +77,7 @@ func (l LeastCost) Compute(args api.NodeScoreArgs) (api.NodeScore, error) {
 		}
 	}
 	//divide total NormalizedResourceUnits by instance price to get score
-	info, err := l.instanceTypeInfoAccess.GetInfo(args.Placement.Region, args.ScaledAssignment.Node.InstanceType)
+	info, err := l.instanceTypeInfoAccess.GetInfo(args.Placement.Region, args.Placement.InstanceType)
 	if err != nil {
 		return api.NodeScore{}, err
 	}
@@ -139,7 +139,7 @@ func (l LeastWaste) Compute(args api.NodeScoreArgs) (nodeScore api.NodeScore, er
 		}
 	}
 	//calculate single score from wastage using weights
-	weights, err := l.weightsFn(args.ScaledAssignment.Node.InstanceType)
+	weights, err := l.weightsFn(args.Placement.InstanceType)
 	var totalNormalizedResourceUnits float64
 	for resourceName, waste := range wastage {
 		if weight, found := weights[resourceName]; !found {
@@ -185,7 +185,7 @@ func SelectMaxAllocatable(nodeScores []api.NodeScore, weightsFn api.GetWeightsFu
 	}
 	var winners []int
 	var maxNormalizedAlloc float64
-	weights, err := weightsFn(nodeScores[0].ScaledNodeResource.InstanceType)
+	weights, err := weightsFn(nodeScores[0].Placement.InstanceType)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func SelectMaxAllocatable(nodeScores []api.NodeScore, weightsFn api.GetWeightsFu
 	winners = append(winners, 0)
 	for index, candidate := range nodeScores[1:] {
 		var normalizedAlloc float64
-		weights, err = weightsFn(candidate.ScaledNodeResource.InstanceType)
+		weights, err = weightsFn(candidate.Placement.InstanceType)
 		if err != nil {
 			return nil, err
 		}
@@ -232,14 +232,14 @@ func SelectMinPrice(nodeScores []api.NodeScore, weightsFn api.GetWeightsFunc, pr
 		return &nodeScores[0], nil
 	}
 	var winners []int
-	info, err := pricing.GetInfo(nodeScores[0].Placement.Region, nodeScores[0].ScaledNodeResource.InstanceType)
+	info, err := pricing.GetInfo(nodeScores[0].Placement.Region, nodeScores[0].Placement.InstanceType)
 	if err != nil {
 		return nil, err
 	}
 	leastPrice := info.HourlyPrice
 	winners = append(winners, 0)
 	for index, candidate := range nodeScores[1:] {
-		info, err := pricing.GetInfo(candidate.Placement.Region, candidate.ScaledNodeResource.InstanceType)
+		info, err := pricing.GetInfo(candidate.Placement.Region, candidate.Placement.InstanceType)
 		if err != nil {
 			return nil, err
 		}
