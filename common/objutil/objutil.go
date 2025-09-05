@@ -66,6 +66,18 @@ func LoadYamlIntoCoreRuntimeObj(yamlPath string, obj any) (err error) {
 	return
 }
 
+func WriteCoreRuntimeObjToYaml(obj runtime.Object, yamlPath string) error {
+	data, err := sigyaml.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("failed to marshal object to YAML: %w", err)
+	}
+	err = os.WriteFile(yamlPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write YAML to %q: %w", yamlPath, err)
+	}
+	return nil
+}
+
 func SetMetaObjectGVK(obj metav1.Object, gvk schema.GroupVersionKind) {
 	if runtimeObj, ok := obj.(runtime.Object); ok {
 		objGVK := runtimeObj.GetObjectKind().GroupVersionKind()

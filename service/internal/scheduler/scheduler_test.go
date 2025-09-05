@@ -3,15 +3,16 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	commontypes "github.com/gardener/scaling-advisor/api/common/types"
 	commoncli "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/gardener/scaling-advisor/common/testutil"
 	mkapi "github.com/gardener/scaling-advisor/minkapi/api"
 	mkserver "github.com/gardener/scaling-advisor/minkapi/server"
 	"github.com/gardener/scaling-advisor/service/api"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/klog/v2"
 	"os"
 	"testing"
 	"time"
@@ -25,10 +26,14 @@ type suiteState struct {
 	app             *mkapi.App
 	nodeA           corev1.Node
 	podA            corev1.Pod
-	clientFacades   commontypes.ClientFacades
+	baseView        mkapi.View
+	wamView         mkapi.View
+	bamView         mkapi.View
 	schedulerHandle api.SchedulerHandle
 	dynClient       dynamic.Interface
 }
+
+var log = klog.NewKlogr()
 
 // TestMain sets up the MinKAPI server once for all tests in this package, runs tests and then shutdown.
 func TestMain(m *testing.M) {
@@ -45,10 +50,15 @@ func TestMain(m *testing.M) {
 
 }
 
-func TestPodNodeAssignment(t *testing.T) {
+func TestSingleSchedulerPodNodeAssignment(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	client := state.clientFacades.Client
+	clientFacades, err := state.baseView.GetClientFacades()
+	if err != nil {
+		t.Fatalf("failed to get client facades: %v", err)
+		return
+	}
+	client := clientFacades.Client
 
 	createdNode, err := client.CoreV1().Nodes().Create(ctx, &state.nodeA, metav1.CreateOptions{})
 	if err != nil {
@@ -63,7 +73,7 @@ func TestPodNodeAssignment(t *testing.T) {
 		return
 	}
 	t.Logf("Created podA with name %q", createdPod.Name)
-	<-time.After(5 * time.Second) // TODO: replace with better approach.
+	<-time.After(6 * time.Second) // TODO: replace with better approach.
 	evList := state.app.Server.GetBaseView().GetEventSink().List()
 	if len(evList) == 0 {
 		t.Fatalf("got no evList, want at least one")
@@ -83,6 +93,7 @@ func TestPodNodeAssignment(t *testing.T) {
 func initSuite(ctx context.Context) error {
 	var err error
 	var exitCode int
+	ctx = logr.NewContext(ctx, log)
 
 	app, exitCode := mkserver.LaunchApp(ctx)
 	if exitCode != commoncli.ExitSuccess {
@@ -92,7 +103,12 @@ func initSuite(ctx context.Context) error {
 
 	state.app = &app
 	state.ctx, state.cancel = app.Ctx, app.Cancel
-	state.clientFacades, err = app.Server.GetBaseView().GetClientFacades()
+	state.baseView = app.Server.GetBaseView()
+	state.wamView, err = app.Server.GetSandboxView(ctx, "wam")
+	if err != nil {
+		return err
+	}
+	state.bamView, err = app.Server.GetSandboxView(ctx, "bam")
 	if err != nil {
 		return err
 	}
@@ -101,11 +117,14 @@ func initSuite(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	params := &api.SchedulerLaunchParams{
-		ClientFacades: state.clientFacades,
-		EventSink:     app.Server.GetBaseView().GetEventSink(),
+	clientFacades, err := state.baseView.GetClientFacades()
+	if err != nil {
+		return err
 	}
-	state.schedulerHandle, err = launcher.Launch(state.ctx, params)
+	state.schedulerHandle, err = launcher.Launch(state.ctx, &api.SchedulerLaunchParams{
+		ClientFacades: clientFacades,
+		EventSink:     app.Server.GetBaseView().GetEventSink(),
+	})
 	if err != nil {
 		return err
 	}

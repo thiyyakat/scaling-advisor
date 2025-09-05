@@ -153,7 +153,7 @@ type ViewArgs struct {
 	WatchConfig WatchConfig
 }
 
-// Server represents a MinKAPI server that provides access to a KAPI (kubernetes API) service accessible at http://<MinKAPIHost>:<MinKAPIPort>/basePrefix
+// Server represents a MinKAPI server that provides access to a KAPI (kubernetes API) service accessible at http://<MinKAPIHost>:<MinKAPIPort>/base
 // It also supports methods to create "sandbox" (private) views accessible at http://<MinKAPIHost>:<MinKAPIPort>/sandboxName
 type Server interface {
 	commontypes.Service

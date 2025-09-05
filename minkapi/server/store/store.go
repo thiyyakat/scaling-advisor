@@ -420,7 +420,7 @@ func WrapMetaObjectsIntoRuntimeListObject(resourceVersion int64, objectGVK schem
 	}
 
 	itemType := itemsField.Type().Elem() // e.g., corev1.Pod
-	resultSlice := reflect.MakeSlice(itemType, 0, len(items))
+	resultSlice := reflect.MakeSlice(itemsField.Type(), 0, len(items))
 
 	objs, err := objutil.SliceOfMetaObjToRuntimeObj(items)
 	if err != nil {

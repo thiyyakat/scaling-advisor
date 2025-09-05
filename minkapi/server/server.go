@@ -150,6 +150,7 @@ func NewInMemoryUsingViews(cfg api.MinKAPIConfig, baseView api.View, sandboxView
 		},
 		baseView:            baseView,
 		createSandboxViewFn: sandboxViewCreateFn,
+		sandboxViews:        make(map[string]api.View),
 	}
 	// DO NOT REMOVE: Single route registration crap needed for kubectl compatability as it ignores server path prefixes
 	// and always makes a call to http://localhost:8084/api/v1/?timeout=32s
@@ -177,6 +178,7 @@ func (k *InMemoryKAPI) Start(ctx context.Context) error {
 	k.listenerAddr = listener.Addr()
 	kapiURL := fmt.Sprintf("http://%s:%d/%s", k.cfg.Host, k.cfg.Port, k.cfg.BasePrefix)
 	err = configtmpl.GenKubeConfig(configtmpl.KubeConfigParams{
+		Name:           api.DefaultBasePrefix,
 		KubeConfigPath: k.cfg.KubeConfigPath,
 		URL:            kapiURL,
 	})
@@ -226,15 +228,17 @@ func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.Vie
 		return nil, fmt.Errorf("%w: invalid sandbox-kapi URI for view %q: %w", api.ErrCreateSandbox, name, err)
 	}
 	baseKubeConfigDir := filepath.Dir(k.cfg.KubeConfigPath)
-	kubeConfigPath := filepath.Join(baseKubeConfigDir, name)
+	kubeConfigPath := filepath.Join(baseKubeConfigDir, fmt.Sprintf("minkapi-%s.yaml", name))
+	log.Info("generating kubeconfig for sandbox", "name", name, "path", kubeConfigPath)
 	err = configtmpl.GenKubeConfig(configtmpl.KubeConfigParams{
+		Name:           name,
 		KubeConfigPath: kubeConfigPath,
 		URL:            kapiURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot generate kubeconfig for view %q: %w", api.ErrCreateSandbox, name, err)
 	}
-	log.Info("sandbox kubeconfig generated", "path", k.cfg.KubeConfigPath)
+	log.Info("sandbox kubeconfig generated", "name", name, "path", k.cfg.KubeConfigPath)
 
 	sandboxView, err = k.createSandboxViewFn(log, k.baseView, &api.ViewArgs{
 		Name:           name,

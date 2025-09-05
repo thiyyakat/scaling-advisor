@@ -69,6 +69,7 @@ type KubeSchedulerTmplParams struct {
 }
 
 type KubeConfigParams struct {
+	Name           string
 	KubeConfigPath string
 	URL            string
 }
