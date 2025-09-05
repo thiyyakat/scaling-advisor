@@ -3,9 +3,9 @@
 > [!WARNING]
 > Work In Progress 
 
-## High-Level Picture
+## High Level Operational View
 
-![High Level Diagram](./assets/scaling-advisor-highlevel.svg)
+![High Level Operational View](./assets/high-level.svg)
 
 - `ScalingAdvisor` is an *advisory-controller* that reconciles `ClusterScalingConstraint` and `ClusterScalingAdviceFeedback` and generates next `ClusterScalingAdvice`
 - Real actions are taken by a consuming lifecycle management component like the MCM. Scaling advisor does not take actions
