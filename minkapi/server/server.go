@@ -125,6 +125,15 @@ func NewDefaultInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, err
 		Scheme:         scheme,
 		WatchConfig:    cfg.WatchConfig,
 	})
+	// TODO: wrap errors with sentinel error code here.
+	if err != nil {
+		return nil, err
+	}
+	err = baseView.CreateObject(typeinfo.NamespacesDescriptor.GVK, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: corev1.NamespaceDefault,
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +406,7 @@ func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 			namespace = GetObjectName(r, d).Namespace
 			mo.SetNamespace(namespace)
 		}
-		err = view.StoreObject(d.GVK, mo)
+		err = view.CreateObject(d.GVK, mo)
 		if err != nil {
 			handleError(w, r, err)
 			return

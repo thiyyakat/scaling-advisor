@@ -114,7 +114,7 @@ type View interface {
 	GetClientFacades() (commontypes.ClientFacades, error)
 	GetResourceStore(gvk schema.GroupVersionKind) (ResourceStore, error)
 	GetEventSink() EventSink
-	StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error
+	CreateObject(gvk schema.GroupVersionKind, obj metav1.Object) error
 	GetObject(gvk schema.GroupVersionKind, objName cache.ObjectName) (runtime.Object, error)
 	UpdateObject(gvk schema.GroupVersionKind, obj metav1.Object) error
 	UpdatePodNodeBinding(podName cache.ObjectName, binding corev1.Binding) (*corev1.Pod, error)

@@ -704,7 +704,7 @@ package server
 //	if !ok {
 //		return obj, err
 //	}
-//	err = svc.baseView.StoreObject(gvk, objInterface)
+//	err = svc.baseView.CreateObject(gvk, objInterface)
 //	if err != nil {
 //		return obj, err
 //	}

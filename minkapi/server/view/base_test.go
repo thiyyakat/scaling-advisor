@@ -352,7 +352,7 @@ func createObjectFromFileName[T any](t *testing.T, view api.View, fileName strin
 	if !ok {
 		return obj, err
 	}
-	err = view.StoreObject(gvk, objInterface)
+	err = view.CreateObject(gvk, objInterface)
 	if err != nil {
 		return obj, err
 	}

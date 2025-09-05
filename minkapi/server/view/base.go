@@ -114,7 +114,7 @@ func (v *baseView) GetResourceStore(gvk schema.GroupVersionKind) (api.ResourceSt
 	return s, nil
 }
 
-func (v *baseView) StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
+func (v *baseView) CreateObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
 	return storeObject(v, gvk, obj, &v.changeCount)
 }
 

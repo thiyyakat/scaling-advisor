@@ -388,7 +388,7 @@ func createBinding(p *corev1.Pod, n *corev1.Node) corev1.Binding {
 
 func storePod(t *testing.T, v api.View, p *corev1.Pod) error {
 	t.Helper()
-	err := v.StoreObject(typeinfo.PodsDescriptor.GVK, p)
+	err := v.CreateObject(typeinfo.PodsDescriptor.GVK, p)
 	if err != nil {
 		t.Fatalf("failed to store pod: %v", err)
 		return err
@@ -398,7 +398,7 @@ func storePod(t *testing.T, v api.View, p *corev1.Pod) error {
 
 func storeNode(t *testing.T, v api.View, n *corev1.Node) error {
 	t.Helper()
-	err := v.StoreObject(typeinfo.NodesDescriptor.GVK, n)
+	err := v.CreateObject(typeinfo.NodesDescriptor.GVK, n)
 	if err != nil {
 		t.Fatalf("in view %q, failed to store node: %v", v.GetName(), err)
 		return err

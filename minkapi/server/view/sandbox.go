@@ -111,7 +111,7 @@ func (v *sandboxView) GetEventSink() api.EventSink {
 	return v.eventSink
 }
 
-func (v *sandboxView) StoreObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
+func (v *sandboxView) CreateObject(gvk schema.GroupVersionKind, obj metav1.Object) error {
 	return storeObject(v, gvk, obj, &v.changeCount)
 }
 
@@ -143,7 +143,7 @@ func (v *sandboxView) UpdateObject(gvk schema.GroupVersionKind, obj metav1.Objec
 		return updateObject(v, gvk, obj, &v.changeCount)
 	}
 	// The object is in base view and should not be modified - store in sandbox view now.
-	return v.StoreObject(gvk, obj)
+	return v.CreateObject(gvk, obj)
 }
 
 func (v *sandboxView) UpdatePodNodeBinding(podName cache.ObjectName, binding corev1.Binding) (pod *corev1.Pod, err error) {
@@ -173,7 +173,7 @@ func (v *sandboxView) UpdatePodNodeBinding(podName cache.ObjectName, binding cor
 	}
 	// found in base so lets make a copy and store in sandbox
 	sandboxPod := pod.DeepCopy()
-	err = v.StoreObject(gvk, sandboxPod)
+	err = v.CreateObject(gvk, sandboxPod)
 	if err != nil {
 		return
 	}
