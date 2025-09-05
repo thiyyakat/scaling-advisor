@@ -1,4 +1,4 @@
-# Scaling Recommender Motivation
+# Scaling Advisor Motivation
 
 
 
@@ -9,7 +9,7 @@ Gardener uses a [fork](https://github.com/gardener/autoscaler/tree/machine-contr
 This proposal highlights the following:
 
 * Challenges and the shortcomings of current CA and its interplay with MCM.
-* The extensive simulation environment that was built during the POC phase, which provides capabilities to capture events from any Gardener cluster and replay the events on a local kubernetes cluster with virtual CA. This helped us capture and understand the current CA's behavior, identify its shortcomings and compare the CA's scale-up plan against the recommendation offered by our alternative system.
+* The extensive simulation environment that was built during the POC phase, which provides capabilities to capture events from any Gardener cluster and replay the events on a local kubernetes cluster with virtual CA. This helped us capture and understand the current CA's behavior, identify its shortcomings and compare the CA's scale-up plan against the scaling advice offered by our alternative system.
 * Provides a glimpse of the way forward from here.
 
 ## Motivation
@@ -47,7 +47,7 @@ Gardener provides capabilities to scale-in and scale-out a kubernetes cluster vi
 * *Canary-Issue#4276* highlights the issue where the CA fitment check differs from the kube-scheduler's decision of treating a pod as unschedulable. These sort of issues will keep coming as long as CA continues to use only filter plugins from the scheduler and not an actual upstream kube-scheduler. This also will create further problems when the actual kube-scheduler is built with custom scheduler plugins causing the decisions to diverge even further between CA and kube-scheduler.
 * Since Kubernetes release 1.18, kube-scheduler supports cluster-wide default PodTopologySpreadConstraints. See [here](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/#cluster-level-default-constraints). This is done during the `Scoring` phase of the scheduler and since CA only uses `Filtering` phase via scheduler APIs, CA can never support it. See [Issue#3879](https://github.com/kubernetes/autoscaler/issues/3879).
 
-> Kubernetes kube-scheduler will keep on evolving as new usage patterns emerge in the kubernetes space. It is evident that solutions that do not leverage kube-scheduler as-is will always fall behind which will lead to sub-optimal and sometimes inaccurate scaling recommendations.
+> Kubernetes kube-scheduler will keep on evolving as new usage patterns emerge in the kubernetes space. It is evident that solutions that do not leverage kube-scheduler as-is will always fall behind which will lead to sub-optimal and sometimes inaccurate scaling advice.
 
 ##### Inefficient scaling of NodeGroup(s)
 
@@ -90,38 +90,38 @@ Currently there are only [two cluster autoscaling implementations](https://kuber
 * It offers a more elaborate consolidation as compared to CA. However, active consolidation is seldom turned on due to potential disruptions to the deployed workloads. Even though Karpenter offers [disruption budget](https://karpenter.sh/docs/concepts/disruption/) it still is not a heavily used feature and there are open issues on this feature.
 * It offers general lifecycle management of instances/machines apart from autoscaling clusters. This creates a larger overlap of responsibilities with node-lifecycle-management components like the MCM thus aggravating the two-actor issues.
 * It only supports [AWS](https://github.com/aws/karpenter-provider-aws) and [Azure](https://github.com/Azure/karpenter-provider-azure) cloud providers at the moment.
-* It couples scaling recommendations with node lifecycle actions thus changes in core recommendation logic will require a fork to be maintained or contribute upstream.
+* It couples scaling advice with node lifecycle actions thus changes in core advisor logic will require a fork to be maintained or contribute upstream.
 
 ### How we addressed CA challenges?
 
-A proof-of-concept [Scaling Recommender](https://github.tools.sap/kubernetes/gardener-scaling-recommender) was envisaged which has single responsibility to provide scaling advice by leveraging the kubernetes kube-scheduler on the current cluster state.
+A proof-of-concept [Scaling Advisor](https://github.tools.sap/kubernetes/gardener-scaling-recommender) was envisaged which has single responsibility to provide scaling advice by leveraging the kubernetes kube-scheduler on the current cluster state.
 
 ![Scaling Recommender POC Flow](assets/poc-flow.png)
 
 
 #### Single actor responsibility
 
-Scaling analysis should be the primary concern of a scaling recommender. In our PoC, a clear separation was introduced between the responsibilities of scaling analysis and scaling execution. Our scaling-recommender provides scaling advice after analysis of the as-is cluster state which includes the unscheduled pods. Since lifecycle-management components like MCM will leverage the advice produced by the scaling recommender and will be the only actor to perform real lifecycle operations on the cluster, there are no overlapping actors.
+Scaling analysis should be the primary concern of a scaling advisor. In our PoC, a clear separation was introduced between the responsibilities of scaling analysis and scaling execution. Our scaling-advisor provides scaling advice after analysis of the as-is cluster state which includes the unscheduled pods. Since lifecycle-management components like MCM will leverage the advice produced by the scaling-advisor and will be the only actor to perform real lifecycle operations on the cluster, there are no overlapping actors.
 
 #### Alleviating CA inherent design flaws
 
 * Due to clear separation of responsibilities, we have the following advantages:
-  * Concurrency issues (if any) in the recommender will not propagate to the lifecycle management component like MCM.
-  * There will be no overlap/conflict of tuning parameters between the scaling recommender and the lifecycle management component.
-  * Simplifies the code base as there is no provider-specific implementation in the scaling recommendation.
-* Leverages a real kube-scheduler running as part of a virtual cluster to run simulations and make recommendations. 
+  * Concurrency issues (if any) in the scaling-advisor will not propagate to the lifecycle management component like MCM.
+  * There will be no overlap/conflict of tuning parameters between the scaling-advisor  and the lifecycle management component.
+  * Simplifies the code base as there is no provider-specific implementation in the scaling advice.
+* Leverages a real kube-scheduler running as part of a virtual cluster to run simulations and provide scaling advice. 
   * This removes any possibility of deviating from the actual kube-scheduler (default or custom) decisions.
   * Minimises the possibility of over provisioning nodes that CA suffers from.
-  * In the absence of explicit instance priority, scaling recommendations also respects `preferredDuringSchedulingIgnoredDuringExecution` and chooses cost-optimised instance types that statisfy the unschedulable pod requirements more closely.
+  * In the absence of explicit instance priority, scaling advice also respects `preferredDuringSchedulingIgnoredDuringExecution` and chooses cost-optimised instance types that statisfy the unschedulable pod requirements more closely.
   * Automatically supports [cluster wide default scheduling constraints](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/#cluster-level-default-constraints).
 * The lifecycle management component controls the execution of the scaling advice. This differs from the current hard coded prioritization in CA where scale-outs are always prioritized over scale-ins.
-* Scaling recommender attempts to minimize the overall *price* of scaled-out resources. CPU and memory are treated differentially in the computation of waste for evaluating the node score. This was achieved by pre-computing the relevant cost ratios for the given cloud provider and region.
+* scaling-advisor attempts to minimize the overall *price* of scaled-out resources. CPU and memory are treated differentially in the computation of waste for evaluating the node score. This was achieved by pre-computing the relevant cost ratios for the given cloud provider and region.
   
   > NOTE: As part of the POC only CPU and Memory were considered for scoring nodes. However during productization this can be further improved.
-* Scaling recommender does a better job balancing scale-outs across availability zones. In a single simulation run it takes a cross product of single instance type and multiple zones and takes the best score.
+* scaling-advisor does a better job balancing scale-outs across availability zones. In a single simulation run it takes a cross product of single instance type and multiple zones and takes the best score.
 
 #### Scalability
-Anectodally we observed that scaling recommender POC was faster than CA in computing scaling plan for large clusters like HANA. However, we are yet to carry out rigorous benchmarking which will be done during productization.
+Anectodally we observed that scaling advisor POC was faster than CA in computing scaling plan for large clusters like HANA. However, we are yet to carry out rigorous benchmarking which will be done during productization.
 
 ### Proof of concept validation
 
@@ -130,20 +130,20 @@ Anectodally we observed that scaling recommender POC was faster than CA in compu
 
 ### Envisaged value differentiators
 
-* Capability to plug-and-play kube-scheduler for affecting scaling recommendations.
+* Capability to plug-and-play kube-scheduler for affecting scaling advice.
 * Capability to provide native support for gang-scheduled pods.
 * Capability to adapt to flexible worker pool configurations.
 
 ### Risk Mitigation
 
 * We will continue to support CA for forseeable future.
-* Functionalities of CA that are consumed by our stakeholders will be supported by scaling recommender and MCM which will enable easy transition from CA to scaling recommender for existing shoots.
-* A feature flag will be introduced to switch to using scaling recommender for any shoot cluster to permit the stakeholder to verify the behavior of the new component for real-life workloads.
+* Functionalities of CA that are consumed by our stakeholders will be supported by the scaling-advisor and MCM which will enable easy transition from CA to scaling-advisor for existing shoots.
+* A feature flag will be introduced to switch to using the scaling-advisor for any shoot cluster to permit the stakeholder to verify the behavior of the new component for real-life workloads.
 
 ### Non Goal
 
-* Scaling recommender is independent of the Cluster API. Any VM lifecycle management component can leverage this as a library.
-* Scaling recommender will not revise the Gardener worker pool concept.
+* scaling-advisor is independent of the Cluster API. Any VM lifecycle management component can leverage this as a library.
+* scaling-advisor will not revise the Gardener worker pool concept.
 
 
 ## Appendix
