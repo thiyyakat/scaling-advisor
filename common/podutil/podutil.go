@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// Package podutil has routines copied from k8s api server's pkg/api/pod/util.go
 package podutil
 
 import (
+	svcapi "github.com/gardener/scaling-advisor/api/service"
+	"github.com/gardener/scaling-advisor/common/objutil"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -51,4 +52,40 @@ func GetPodCondition(status *corev1.PodStatus, conditionType corev1.PodCondition
 		}
 	}
 	return -1, nil
+}
+
+// AsPod converts a svcapi.PodInfo to a corev1.Pod object.
+func AsPod(info svcapi.PodInfo) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            info.Name,
+			Namespace:       info.Namespace,
+			Labels:          info.Labels,
+			Annotations:     info.Annotations,
+			UID:             info.UID,
+			OwnerReferences: info.OwnerReferences,
+		},
+		Spec: corev1.PodSpec{
+			Volumes:                   info.Volumes,
+			NodeSelector:              info.NodeSelector,
+			NodeName:                  info.NodeName,
+			Affinity:                  info.Affinity,
+			SchedulerName:             info.SchedulerName,
+			Tolerations:               info.Tolerations,
+			PriorityClassName:         info.PriorityClassName,
+			Priority:                  info.Priority,
+			RuntimeClassName:          info.RuntimeClassName,
+			PreemptionPolicy:          info.PreemptionPolicy,
+			Overhead:                  objutil.Int64MapToResourceList(info.Overhead),
+			TopologySpreadConstraints: info.TopologySpreadConstraints,
+			SchedulingGates:           info.SchedulingGates,
+			ResourceClaims:            info.ResourceClaims,
+			// TODO check if the scheduler only looks at container resources and aggregates them
+			// or does it also look for pod level Resources which is feature currently behind
+			// PodLevelResources featureGate. This feature is currently alpha.
+			Resources: &corev1.ResourceRequirements{
+				Requests: objutil.Int64MapToResourceList(info.AggregatedRequests),
+			},
+		},
+	}
 }

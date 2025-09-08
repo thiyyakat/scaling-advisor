@@ -1,9 +1,13 @@
+// SPDX-FileCopyrightText: 2025 SAP SE or an SAP affiliate company and Gardener contributors
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package scheduler
 
 import (
 	"context"
 	"fmt"
-	"github.com/gardener/scaling-advisor/service/api"
+	svcapi "github.com/gardener/scaling-advisor/api/service"
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/semaphore"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,24 +21,24 @@ import (
 	"os"
 )
 
-var _ api.SchedulerLauncher = (*schedulerLauncher)(nil)
+var _ svcapi.SchedulerLauncher = (*schedulerLauncher)(nil)
 
 type schedulerLauncher struct {
 	schedulerConfig *schedulerapiconfig.KubeSchedulerConfiguration
 	semaphore       *semaphore.Weighted
 }
 
-var _ api.SchedulerHandle = (*schedulerHandle)(nil)
+var _ svcapi.SchedulerHandle = (*schedulerHandle)(nil)
 
 type schedulerHandle struct {
 	ctx       context.Context
 	name      string
 	scheduler *scheduler.Scheduler
 	cancelFn  context.CancelFunc
-	params    *api.SchedulerLaunchParams
+	params    *svcapi.SchedulerLaunchParams
 }
 
-func NewLauncher(schedulerConfigPath string, maxConcurrent int) (api.SchedulerLauncher, error) {
+func NewLauncher(schedulerConfigPath string, maxConcurrent int) (svcapi.SchedulerLauncher, error) {
 	// Initialize the scheduler with the provided configuration
 	scheduledConfig, err := loadSchedulerConfig(schedulerConfigPath)
 	if err != nil {
@@ -49,7 +53,7 @@ func NewLauncher(schedulerConfigPath string, maxConcurrent int) (api.SchedulerLa
 func loadSchedulerConfig(configPath string) (config *schedulerapiconfig.KubeSchedulerConfiguration, err error) {
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("%w: %w", api.ErrLoadSchedulerConfig, err)
+			err = fmt.Errorf("%w: %w", svcapi.ErrLoadSchedulerConfig, err)
 		}
 	}()
 
@@ -73,7 +77,7 @@ func loadSchedulerConfig(configPath string) (config *schedulerapiconfig.KubeSche
 	return config, nil
 }
 
-func (s *schedulerLauncher) Launch(ctx context.Context, params *api.SchedulerLaunchParams) (api.SchedulerHandle, error) {
+func (s *schedulerLauncher) Launch(ctx context.Context, params *svcapi.SchedulerLaunchParams) (svcapi.SchedulerHandle, error) {
 	log := logr.FromContextOrDiscard(ctx)
 	if err := s.semaphore.Acquire(ctx, 1); err != nil {
 		return nil, err
@@ -93,11 +97,11 @@ func (s *schedulerLauncher) Launch(ctx context.Context, params *api.SchedulerLau
 	return handle, nil
 }
 
-func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn context.CancelFunc, params *api.SchedulerLaunchParams) (handle *schedulerHandle, err error) {
+func (s *schedulerLauncher) createSchedulerHandle(ctx context.Context, cancelFn context.CancelFunc, params *svcapi.SchedulerLaunchParams) (handle *schedulerHandle, err error) {
 	defer func() {
 		if err != nil {
 			cancelFn()
-			err = fmt.Errorf("%w: %w", api.ErrLaunchScheduler, err)
+			err = fmt.Errorf("%w: %w", svcapi.ErrLaunchScheduler, err)
 		}
 	}()
 	log := logr.FromContextOrDiscard(ctx)
@@ -147,6 +151,6 @@ func (s *schedulerHandle) Stop() {
 	s.cancelFn()
 }
 
-func (s *schedulerHandle) GetParams() api.SchedulerLaunchParams {
+func (s *schedulerHandle) GetParams() svcapi.SchedulerLaunchParams {
 	return *s.params
 }

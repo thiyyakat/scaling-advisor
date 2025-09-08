@@ -1,13 +1,17 @@
+// SPDX-FileCopyrightText: 2025 SAP SE or an SAP affiliate company and Gardener contributors
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package scheduler
 
 import (
 	"context"
 	"fmt"
+	mkapi "github.com/gardener/scaling-advisor/api/minkapi"
+	svcapi "github.com/gardener/scaling-advisor/api/service"
 	commoncli "github.com/gardener/scaling-advisor/common/cli"
 	"github.com/gardener/scaling-advisor/common/testutil"
-	mkapi "github.com/gardener/scaling-advisor/minkapi/api"
 	mkserver "github.com/gardener/scaling-advisor/minkapi/server"
-	"github.com/gardener/scaling-advisor/service/api"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,7 +33,7 @@ type suiteState struct {
 	baseView        mkapi.View
 	wamView         mkapi.View
 	bamView         mkapi.View
-	schedulerHandle api.SchedulerHandle
+	schedulerHandle svcapi.SchedulerHandle
 	dynClient       dynamic.Interface
 }
 
@@ -121,7 +125,7 @@ func initSuite(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	state.schedulerHandle, err = launcher.Launch(state.ctx, &api.SchedulerLaunchParams{
+	state.schedulerHandle, err = launcher.Launch(state.ctx, &svcapi.SchedulerLaunchParams{
 		ClientFacades: clientFacades,
 		EventSink:     app.Server.GetBaseView().GetEventSink(),
 	})

@@ -6,6 +6,7 @@ package scalingconstraints
 
 import (
 	"context"
+
 	corev1alpha1 "github.com/gardener/scaling-advisor/api/core/v1alpha1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"

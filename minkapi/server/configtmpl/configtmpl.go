@@ -8,10 +8,9 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	mkapi "github.com/gardener/scaling-advisor/api/minkapi"
 	"os"
 	"text/template"
-
-	"github.com/gardener/scaling-advisor/minkapi/api"
 )
 
 //go:embed templates/*.yaml
@@ -52,11 +51,11 @@ func loadTemplateConfig(templateConfigPath string) (*template.Template, error) {
 
 	data, err = content.ReadFile(templateConfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot read %s from content FS: %w", api.ErrLoadConfigTemplate, templateConfigPath, err)
+		return nil, fmt.Errorf("%w: cannot read %s from content FS: %w", mkapi.ErrLoadConfigTemplate, templateConfigPath, err)
 	}
 	templateConfig, err := template.New(templateConfigPath).Parse(string(data))
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot parse %s template: %w", api.ErrLoadConfigTemplate, templateConfigPath, err)
+		return nil, fmt.Errorf("%w: cannot parse %s template: %w", mkapi.ErrLoadConfigTemplate, templateConfigPath, err)
 	}
 	return templateConfig, nil
 }
@@ -82,11 +81,11 @@ func GenKubeConfig(params KubeConfigParams) error {
 	var buf bytes.Buffer
 	err = kubeConfigTemplate.Execute(&buf, params)
 	if err != nil {
-		return fmt.Errorf("%w: cannot render %q template with params %q: %w", api.ErrExecuteConfigTemplate, kubeConfigTemplate.Name(), params, err)
+		return fmt.Errorf("%w: cannot render %q template with params %q: %w", mkapi.ErrExecuteConfigTemplate, kubeConfigTemplate.Name(), params, err)
 	}
 	err = os.WriteFile(params.KubeConfigPath, buf.Bytes(), 0644)
 	if err != nil {
-		return fmt.Errorf("%w: cannot write kubeconfig to %q: %w", api.ErrExecuteConfigTemplate, params.KubeConfigPath, err)
+		return fmt.Errorf("%w: cannot write kubeconfig to %q: %w", mkapi.ErrExecuteConfigTemplate, params.KubeConfigPath, err)
 	}
 	return nil
 }
@@ -99,11 +98,11 @@ func GenKubeSchedulerConfig(params KubeSchedulerTmplParams) error {
 	var buf bytes.Buffer
 	err = kubeSchedulerConfigTemplate.Execute(&buf, params)
 	if err != nil {
-		return fmt.Errorf("%w: execution of %q template failed with params %v: %w", api.ErrExecuteConfigTemplate, kubeSchedulerConfigTemplate.Name(), params, err)
+		return fmt.Errorf("%w: execution of %q template failed with params %v: %w", mkapi.ErrExecuteConfigTemplate, kubeSchedulerConfigTemplate.Name(), params, err)
 	}
 	err = os.WriteFile(params.KubeSchedulerConfigPath, buf.Bytes(), 0644)
 	if err != nil {
-		return fmt.Errorf("%w: cannot write scheduler config to %q: %w", api.ErrExecuteConfigTemplate, params.KubeSchedulerConfigPath, err)
+		return fmt.Errorf("%w: cannot write scheduler config to %q: %w", mkapi.ErrExecuteConfigTemplate, params.KubeSchedulerConfigPath, err)
 	}
 	return nil
 }

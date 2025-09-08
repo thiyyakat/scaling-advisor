@@ -1,7 +1,11 @@
+// SPDX-FileCopyrightText: 2025 SAP SE or an SAP affiliate company and Gardener contributors
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package inmclient
 
 import (
-	"github.com/gardener/scaling-advisor/minkapi/api"
+	mkapi "github.com/gardener/scaling-advisor/api/minkapi"
 	discovery "k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	admissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
@@ -66,7 +70,7 @@ var (
 )
 
 type inMemClient struct {
-	view api.View
+	view mkapi.View
 }
 
 // AppsV1 retrieves the AppsV1Client

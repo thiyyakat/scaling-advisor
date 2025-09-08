@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"fmt"
+	mkapi "github.com/gardener/scaling-advisor/api/minkapi"
 	"github.com/gardener/scaling-advisor/common/testutil"
 	"reflect"
 	"strconv"
@@ -14,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 
 	"github.com/google/go-cmp/cmp"
@@ -318,7 +318,7 @@ func TestList(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			c := api.MatchCriteria{Namespace: tc.namespace, LabelSelector: tc.labelSelector}
+			c := mkapi.MatchCriteria{Namespace: tc.namespace, LabelSelector: tc.labelSelector}
 			objList, err := s.List(c)
 			if err != nil {
 				testutil.AssertError(t, err, tc.retErr)
@@ -565,12 +565,12 @@ func createStoreForTesting(d typeinfo.Descriptor) *InMemResourceStore {
 	watchTimeout := 2 * time.Second
 	log := klog.NewKlogr().V(4)
 
-	return NewInMemResourceStore(log, &api.ResourceStoreArgs{
+	return NewInMemResourceStore(log, &mkapi.ResourceStoreArgs{
 		Name:          d.GVR.Resource,
 		ObjectGVK:     d.GVK,
 		ObjectListGVK: d.ListGVK,
 		Scheme:        typeinfo.SupportedScheme,
-		WatchConfig:   api.WatchConfig{QueueSize: queueSize, Timeout: watchTimeout},
+		WatchConfig:   mkapi.WatchConfig{QueueSize: queueSize, Timeout: watchTimeout},
 	})
 }
 

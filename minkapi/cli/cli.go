@@ -9,8 +9,8 @@ import (
 	"flag"
 	"fmt"
 	commonconstants "github.com/gardener/scaling-advisor/api/common/constants"
+	"github.com/gardener/scaling-advisor/api/minkapi"
 	commoncli "github.com/gardener/scaling-advisor/common/cli"
-	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
@@ -20,7 +20,7 @@ import (
 
 // MainOpts is a struct that encapsulates target fields for CLI options parsing.
 type MainOpts struct {
-	api.MinKAPIConfig
+	minkapi.Config
 }
 
 // ParseProgramFlags parses the command line arguments and returns MainOpts.
@@ -39,19 +39,19 @@ func ParseProgramFlags(args []string) (*MainOpts, error) {
 
 func setupFlagsToOpts() (*pflag.FlagSet, *MainOpts) {
 	var mainOpts MainOpts
-	flagSet := pflag.NewFlagSet(api.ProgramName, pflag.ContinueOnError)
+	flagSet := pflag.NewFlagSet(minkapi.ProgramName, pflag.ContinueOnError)
 
 	mainOpts.KubeConfigPath = os.Getenv(clientcmd.RecommendedConfigPathEnvVar)
 	if mainOpts.KubeConfigPath == "" {
-		mainOpts.KubeConfigPath = api.DefaultKubeConfigPath
+		mainOpts.KubeConfigPath = minkapi.DefaultKubeConfigPath
 	}
 	if mainOpts.Port == 0 {
 		mainOpts.Port = commonconstants.DefaultMinKAPIPort
 	}
 	commoncli.MapServerConfigFlags(flagSet, &mainOpts.ServerConfig)
-	flagSet.IntVarP(&mainOpts.WatchConfig.QueueSize, "watch-queue-size", "s", api.DefaultWatchQueueSize, "max number of events to queue per watcher")
-	flagSet.DurationVarP(&mainOpts.WatchConfig.Timeout, "watch-timeout", "t", api.DefaultWatchTimeout, "watch timeout after which connection is closed and watch removed")
-	flagSet.StringVarP(&mainOpts.BasePrefix, "base-prefix", "b", api.DefaultBasePrefix, "base path prefix for the base view of the minkapi service")
+	flagSet.IntVarP(&mainOpts.WatchConfig.QueueSize, "watch-queue-size", "s", minkapi.DefaultWatchQueueSize, "max number of events to queue per watcher")
+	flagSet.DurationVarP(&mainOpts.WatchConfig.Timeout, "watch-timeout", "t", minkapi.DefaultWatchTimeout, "watch timeout after which connection is closed and watch removed")
+	flagSet.StringVarP(&mainOpts.BasePrefix, "base-prefix", "b", minkapi.DefaultBasePrefix, "base path prefix for the base view of the minkapi service")
 
 	klogFlagSet := flag.NewFlagSet("klog", flag.ContinueOnError)
 	klog.InitFlags(klogFlagSet)
@@ -66,7 +66,7 @@ func validateMainOpts(opts *MainOpts) error {
 	var errs []error
 	errs = append(errs, commoncli.ValidateServerConfigFlags(opts.ServerConfig))
 	if len(strings.TrimSpace(opts.KubeConfigPath)) == 0 {
-		errs = append(errs, fmt.Errorf("%w: --kubeconfig/-k", api.ErrMissingOpt))
+		errs = append(errs, fmt.Errorf("%w: --kubeconfig/-k", minkapi.ErrMissingOpt))
 	}
 	return errors.Join(errs...)
 }

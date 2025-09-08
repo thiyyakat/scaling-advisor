@@ -6,6 +6,7 @@ package store
 
 import (
 	"fmt"
+	mkapi "github.com/gardener/scaling-advisor/api/minkapi"
 	"github.com/gardener/scaling-advisor/common/objutil"
 	"math"
 	"reflect"
@@ -13,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gardener/scaling-advisor/minkapi/api"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
 
 	"github.com/go-logr/logr"
@@ -28,10 +28,10 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-var _ api.ResourceStore = (*InMemResourceStore)(nil)
+var _ mkapi.ResourceStore = (*InMemResourceStore)(nil)
 
 type InMemResourceStore struct {
-	args        *api.ResourceStoreArgs
+	args        *mkapi.ResourceStoreArgs
 	cache       cache.Store
 	broadcaster *watch.Broadcaster
 	// versionCounter is the atomic counter for generating monotonically increasing resource versions
@@ -48,7 +48,7 @@ func (s *InMemResourceStore) GetObjAndListGVK() (objKind schema.GroupVersionKind
 }
 
 // NewInMemResourceStore returns an in-memory store for a given object GVK. TODO: think on simplifying parameters.
-func NewInMemResourceStore(log logr.Logger, args *api.ResourceStoreArgs) *InMemResourceStore {
+func NewInMemResourceStore(log logr.Logger, args *mkapi.ResourceStoreArgs) *InMemResourceStore {
 	s := InMemResourceStore{
 		log:   log,
 		args:  args,
@@ -168,7 +168,7 @@ func (s *InMemResourceStore) Get(objName cache.ObjectName) (o runtime.Object, er
 	return s.GetByKey(objName.String())
 }
 
-func (s *InMemResourceStore) List(c api.MatchCriteria) (listObj runtime.Object, err error) {
+func (s *InMemResourceStore) List(c mkapi.MatchCriteria) (listObj runtime.Object, err error) {
 	items := s.cache.List()
 	currVersionStr := fmt.Sprintf("%d", s.CurrentResourceVersion())
 	typesMap := typeinfo.SupportedScheme.KnownTypes(s.args.ObjectGVK.GroupVersion())
@@ -233,7 +233,7 @@ func (s *InMemResourceStore) List(c api.MatchCriteria) (listObj runtime.Object, 
 	return listObj, nil
 }
 
-func (s *InMemResourceStore) ListMetaObjects(c api.MatchCriteria) (metaObjs []metav1.Object, maxVersion int64, err error) {
+func (s *InMemResourceStore) ListMetaObjects(c mkapi.MatchCriteria) (metaObjs []metav1.Object, maxVersion int64, err error) {
 	items := s.cache.List()
 	sliceSize := int(math.Min(float64(len(items)), float64(100)))
 	metaObjs = make([]metav1.Object, 0, sliceSize)
@@ -242,7 +242,7 @@ func (s *InMemResourceStore) ListMetaObjects(c api.MatchCriteria) (metaObjs []me
 	for _, item := range items {
 		mo, err = AsMeta(item)
 		if err != nil {
-			err = fmt.Errorf("%w: %w", api.ErrListObjects, err)
+			err = fmt.Errorf("%w: %w", mkapi.ErrListObjects, err)
 			return
 		}
 		if !c.Matches(mo) {
@@ -260,13 +260,13 @@ func (s *InMemResourceStore) ListMetaObjects(c api.MatchCriteria) (metaObjs []me
 	return
 }
 
-func (s *InMemResourceStore) DeleteObjects(c api.MatchCriteria) (delCount int, err error) {
+func (s *InMemResourceStore) DeleteObjects(c mkapi.MatchCriteria) (delCount int, err error) {
 	items := s.cache.List()
 	var mo metav1.Object
 	for _, item := range items {
 		mo, err = AsMeta(item)
 		if err != nil {
-			err = fmt.Errorf("%w: %w", api.ErrDeleteObject, err)
+			err = fmt.Errorf("%w: %w", mkapi.ErrDeleteObject, err)
 			return
 		}
 		if !c.Matches(mo) {
@@ -278,7 +278,7 @@ func (s *InMemResourceStore) DeleteObjects(c api.MatchCriteria) (delCount int, e
 			if apierrors.IsNotFound(err) {
 				continue
 			}
-			err = fmt.Errorf("%w: %w", api.ErrDeleteObject, err)
+			err = fmt.Errorf("%w: %w", mkapi.ErrDeleteObject, err)
 			return
 		}
 		err = s.Delete(objName)
@@ -286,7 +286,7 @@ func (s *InMemResourceStore) DeleteObjects(c api.MatchCriteria) (delCount int, e
 			if apierrors.IsNotFound(err) {
 				continue
 			}
-			err = fmt.Errorf("%w: %w", api.ErrDeleteObject, err)
+			err = fmt.Errorf("%w: %w", mkapi.ErrDeleteObject, err)
 			return
 		}
 		delCount++
@@ -331,7 +331,7 @@ func (s *InMemResourceStore) buildPendingWatchEvents(startVersion int64, namespa
 
 type EventCallbackFn func(watch.Event) (err error)
 
-func (s *InMemResourceStore) Watch(ctx context.Context, startVersion int64, namespace string, labelSelector labels.Selector, eventCallback api.WatchEventCallback) error {
+func (s *InMemResourceStore) Watch(ctx context.Context, startVersion int64, namespace string, labelSelector labels.Selector, eventCallback mkapi.WatchEventCallback) error {
 	events, err := s.buildPendingWatchEvents(startVersion, namespace, labelSelector)
 	if err != nil {
 		return err

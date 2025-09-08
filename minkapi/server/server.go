@@ -31,7 +31,7 @@ import (
 	kjson "k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/gardener/scaling-advisor/minkapi/api"
+	mkapi "github.com/gardener/scaling-advisor/api/minkapi"
 	"github.com/gardener/scaling-advisor/minkapi/server/configtmpl"
 	"github.com/gardener/scaling-advisor/minkapi/server/store"
 	"github.com/gardener/scaling-advisor/minkapi/server/typeinfo"
@@ -47,18 +47,18 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-var _ api.Server = (*InMemoryKAPI)(nil)
+var _ mkapi.Server = (*InMemoryKAPI)(nil)
 
-// InMemoryKAPI holds the in-memory stores, watch channels, and version tracking for simple implementation of api.APIServer
+// InMemoryKAPI holds the in-memory stores, watch channels, and version tracking for simple implementation of mkapi.APIServer
 type InMemoryKAPI struct {
-	cfg                 api.MinKAPIConfig
+	cfg                 mkapi.Config
 	listenerAddr        net.Addr
 	scheme              *runtime.Scheme
 	rootMux             *http.ServeMux
 	server              *http.Server
-	baseView            api.View
-	createSandboxViewFn api.CreateSandboxViewFunc
-	sandboxViews        map[string]api.View
+	baseView            mkapi.View
+	createSandboxViewFn mkapi.CreateSandboxViewFunc
+	sandboxViews        map[string]mkapi.View
 }
 
 // LaunchApp is a helper function used to parse cli args, construct, and start the MinKAPI server.
@@ -67,10 +67,10 @@ type InMemoryKAPI struct {
 // and the Cancel func which callers are expected to defer in their main routines.
 //
 // On error, it will log the error to standard error and return the exitCode that callers are expected to exit the process with.
-func LaunchApp(ctx context.Context) (app api.App, exitCode int) {
+func LaunchApp(ctx context.Context) (app mkapi.App, exitCode int) {
 	app.Ctx, app.Cancel = commoncli.CreateAppContext(ctx)
 	log := logr.FromContextOrDiscard(app.Ctx)
-	commoncli.PrintVersion(api.ProgramName)
+	commoncli.PrintVersion(mkapi.ProgramName)
 	mainOpts, err := cli.ParseProgramFlags(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, pflag.ErrHelp) {
@@ -80,7 +80,7 @@ func LaunchApp(ctx context.Context) (app api.App, exitCode int) {
 		exitCode = commoncli.ExitErrParseOpts
 		return
 	}
-	app.Server, err = NewDefaultInMemory(log, mainOpts.MinKAPIConfig)
+	app.Server, err = NewDefaultInMemory(log, mainOpts.Config)
 	if err != nil {
 		log.Error(err, "failed to initialize InMemoryKAPI")
 		exitCode = commoncli.ExitErrStart
@@ -89,17 +89,17 @@ func LaunchApp(ctx context.Context) (app api.App, exitCode int) {
 	// Begin the service in a goroutine
 	go func() {
 		if err := app.Server.Start(app.Ctx); err != nil {
-			if errors.Is(err, api.ErrStartFailed) {
+			if errors.Is(err, mkapi.ErrStartFailed) {
 				log.Error(err, "failed to start service")
 			} else {
-				log.Error(err, fmt.Sprintf("%s start failed", api.ProgramName))
+				log.Error(err, fmt.Sprintf("%s start failed", mkapi.ProgramName))
 			}
 		}
 	}()
 	return
 }
 
-func ShutdownApp(app *api.App) (exitCode int) {
+func ShutdownApp(app *mkapi.App) (exitCode int) {
 	// Create a context with a 5-second timeout for shutdown
 	shutDownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -107,20 +107,20 @@ func ShutdownApp(app *api.App) (exitCode int) {
 
 	// Perform shutdown
 	if err := app.Server.Stop(shutDownCtx); err != nil {
-		log.Error(err, fmt.Sprintf(" %s shutdown failed", api.ProgramName))
+		log.Error(err, fmt.Sprintf(" %s shutdown failed", mkapi.ProgramName))
 		exitCode = commoncli.ExitErrShutdown
 		return
 	}
-	log.Info(fmt.Sprintf("%s shutdown gracefully.", api.ProgramName))
+	log.Info(fmt.Sprintf("%s shutdown gracefully.", mkapi.ProgramName))
 	exitCode = commoncli.ExitSuccess
 	return
 }
 
 // NewDefaultInMemory constructs a KAPI server with default implementations of sub-components.
-func NewDefaultInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, error) {
+func NewDefaultInMemory(log logr.Logger, cfg mkapi.Config) (mkapi.Server, error) {
 	scheme := typeinfo.SupportedScheme
-	baseView, err := view.New(log, &api.ViewArgs{
-		Name:           api.DefaultBasePrefix,
+	baseView, err := view.New(log, &mkapi.ViewArgs{
+		Name:           mkapi.DefaultBasePrefix,
 		KubeConfigPath: cfg.KubeConfigPath,
 		Scheme:         scheme,
 		WatchConfig:    cfg.WatchConfig,
@@ -141,10 +141,10 @@ func NewDefaultInMemory(log logr.Logger, cfg api.MinKAPIConfig) (api.Server, err
 }
 
 // NewInMemoryUsingViews constructs a KAPI server with the given base view and the sandbox view creation function.
-func NewInMemoryUsingViews(cfg api.MinKAPIConfig, baseView api.View, sandboxViewCreateFn api.CreateSandboxViewFunc) (k api.Server, err error) {
+func NewInMemoryUsingViews(cfg mkapi.Config, baseView mkapi.View, sandboxViewCreateFn mkapi.CreateSandboxViewFunc) (k mkapi.Server, err error) {
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("%w: %w", api.ErrInitFailed, err)
+			err = fmt.Errorf("%w: %w", mkapi.ErrInitFailed, err)
 		}
 	}()
 	setMinKAPIConfigDefaults(&cfg)
@@ -159,7 +159,7 @@ func NewInMemoryUsingViews(cfg api.MinKAPIConfig, baseView api.View, sandboxView
 		},
 		baseView:            baseView,
 		createSandboxViewFn: sandboxViewCreateFn,
-		sandboxViews:        make(map[string]api.View),
+		sandboxViews:        make(map[string]mkapi.View),
 	}
 	// DO NOT REMOVE: Single route registration crap needed for kubectl compatability as it ignores server path prefixes
 	// and always makes a call to http://localhost:8084/api/v1/?timeout=32s
@@ -182,34 +182,34 @@ func (k *InMemoryKAPI) Start(ctx context.Context) error {
 	// We do this because we want the bind address
 	listener, err := net.Listen("tcp", k.server.Addr)
 	if err != nil {
-		return fmt.Errorf("%w: cannot listen on TCP Address %q: %w", api.ErrStartFailed, k.server.Addr, err)
+		return fmt.Errorf("%w: cannot listen on TCP Address %q: %w", mkapi.ErrStartFailed, k.server.Addr, err)
 	}
 	k.listenerAddr = listener.Addr()
 	kapiURL := fmt.Sprintf("http://%s:%d/%s", k.cfg.Host, k.cfg.Port, k.cfg.BasePrefix)
 	err = configtmpl.GenKubeConfig(configtmpl.KubeConfigParams{
-		Name:           api.DefaultBasePrefix,
+		Name:           mkapi.DefaultBasePrefix,
 		KubeConfigPath: k.cfg.KubeConfigPath,
 		URL:            kapiURL,
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
+		return fmt.Errorf("%w: %w", mkapi.ErrStartFailed, err)
 	}
 	log.Info("kubeconfig generated", "path", k.cfg.KubeConfigPath)
 
 	schedulerTmplParams := configtmpl.KubeSchedulerTmplParams{
 		KubeConfigPath:          k.cfg.KubeConfigPath,
-		KubeSchedulerConfigPath: fmt.Sprintf("/tmp/%s-kube-scheduler-config.yaml", api.ProgramName),
+		KubeSchedulerConfigPath: fmt.Sprintf("/tmp/%s-kube-scheduler-config.yaml", mkapi.ProgramName),
 		QPS:                     100, //TODO: pass this as param ?
 		Burst:                   50,
 	}
 	err = configtmpl.GenKubeSchedulerConfig(schedulerTmplParams)
 	if err != nil {
-		return fmt.Errorf("%w: %w", api.ErrStartFailed, err)
+		return fmt.Errorf("%w: %w", mkapi.ErrStartFailed, err)
 	}
 	log.Info("sample kube-scheduler-config generated", "path", schedulerTmplParams.KubeSchedulerConfigPath)
-	log.Info(fmt.Sprintf("%s service listening", api.ProgramName), "address", k.server.Addr, "kapiURL", kapiURL)
+	log.Info(fmt.Sprintf("%s service listening", mkapi.ProgramName), "address", k.server.Addr, "kapiURL", kapiURL)
 	if err := k.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("%w: %w", api.ErrServiceFailed, err)
+		return fmt.Errorf("%w: %w", mkapi.ErrServiceFailed, err)
 	}
 	return nil
 }
@@ -221,11 +221,11 @@ func (k *InMemoryKAPI) Stop(ctx context.Context) (err error) {
 	return
 }
 
-func (k *InMemoryKAPI) GetBaseView() api.View {
+func (k *InMemoryKAPI) GetBaseView() mkapi.View {
 	return k.baseView
 }
 
-func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.View, error) {
+func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (mkapi.View, error) {
 	log := logr.FromContextOrDiscard(ctx).WithValues("sandboxName", name)
 	sandboxView, ok := k.sandboxViews[name] // TODO: protected with mutex.
 	if ok {
@@ -234,7 +234,7 @@ func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.Vie
 	kapiURL := fmt.Sprintf("http://%s:%d/%s", k.cfg.Host, k.cfg.Port, name)
 	_, err := url.Parse(kapiURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid sandbox-kapi URI for view %q: %w", api.ErrCreateSandbox, name, err)
+		return nil, fmt.Errorf("%w: invalid sandbox-kapi URI for view %q: %w", mkapi.ErrCreateSandbox, name, err)
 	}
 	baseKubeConfigDir := filepath.Dir(k.cfg.KubeConfigPath)
 	kubeConfigPath := filepath.Join(baseKubeConfigDir, fmt.Sprintf("minkapi-%s.yaml", name))
@@ -245,18 +245,18 @@ func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.Vie
 		URL:            kapiURL,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot generate kubeconfig for view %q: %w", api.ErrCreateSandbox, name, err)
+		return nil, fmt.Errorf("%w: cannot generate kubeconfig for view %q: %w", mkapi.ErrCreateSandbox, name, err)
 	}
 	log.Info("sandbox kubeconfig generated", "name", name, "path", k.cfg.KubeConfigPath)
 
-	sandboxView, err = k.createSandboxViewFn(log, k.baseView, &api.ViewArgs{
+	sandboxView, err = k.createSandboxViewFn(log, k.baseView, &mkapi.ViewArgs{
 		Name:           name,
 		KubeConfigPath: kubeConfigPath,
 		Scheme:         k.scheme,
 		WatchConfig:    k.cfg.WatchConfig,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot create sandbox view for view %q: %w", api.ErrCreateSandbox, name, err)
+		return nil, fmt.Errorf("%w: cannot create sandbox view for view %q: %w", mkapi.ErrCreateSandbox, name, err)
 	}
 	sandboxViewMux := http.NewServeMux()
 	k.registerRoutes(log, sandboxViewMux, sandboxView)
@@ -264,7 +264,7 @@ func (k *InMemoryKAPI) GetSandboxView(ctx context.Context, name string) (api.Vie
 	return sandboxView, nil
 }
 
-func (k *InMemoryKAPI) registerRoutes(log logr.Logger, viewMux *http.ServeMux, view api.View) {
+func (k *InMemoryKAPI) registerRoutes(log logr.Logger, viewMux *http.ServeMux, view mkapi.View) {
 	// TODO: Design: Discuss this since this is not necessary when running as operator since operator has its own profiling enablement.
 	if k.cfg.ProfilingEnabled {
 		log.Info("profiling enabled - registering /debug/pprof/* handlers")
@@ -305,7 +305,7 @@ func (k *InMemoryKAPI) registerAPIGroups(viewMux *http.ServeMux) {
 	}
 }
 
-func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo.Descriptor, view api.View) {
+func (k *InMemoryKAPI) registerResourceRoutes(viewMux *http.ServeMux, d typeinfo.Descriptor, view mkapi.View) {
 	g := d.GVK.Group
 	r := d.GVR.Resource
 	if d.GVK.Group == "" {
@@ -372,7 +372,7 @@ func (k *InMemoryKAPI) handleAPIResources(apiResourceList metav1.APIResourceList
 	}
 }
 
-func handleGet(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handleGet(d typeinfo.Descriptor, view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := GetObjectName(r, d)
 		obj, err := view.GetObject(d.GVK, name)
@@ -384,7 +384,7 @@ func handleGet(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	}
 }
 
-func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handleCreate(d typeinfo.Descriptor, view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var (
 			mo  metav1.Object
@@ -417,7 +417,7 @@ func handleCreate(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 
 // handlePut Ref: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#considerations-for-put-operations (TODO ensure handlePut follows this)
 // TODO: handlePut is not complete
-func handlePut(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handlePut(d typeinfo.Descriptor, view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := GetObjectName(r, d)
 		obj, err := view.GetObject(d.GVK, name)
@@ -437,7 +437,7 @@ func handlePut(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 		writeJsonResponse(w, r, obj)
 	}
 }
-func handleDelete(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handleDelete(d typeinfo.Descriptor, view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		objName := GetObjectName(r, d)
 		obj, err := view.GetObject(d.GVK, objName)
@@ -471,7 +471,7 @@ func handleDelete(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	}
 }
 
-func handleListOrWatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handleListOrWatch(d typeinfo.Descriptor, view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 		isWatch := query.Get("watch")
@@ -492,10 +492,10 @@ func handleListOrWatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	}
 }
 
-func handleList(d typeinfo.Descriptor, view api.View, labelSelector labels.Selector) http.HandlerFunc {
+func handleList(d typeinfo.Descriptor, view mkapi.View, labelSelector labels.Selector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		namespace := r.PathValue("namespace")
-		c := api.MatchCriteria{Namespace: namespace, LabelSelector: labelSelector}
+		c := mkapi.MatchCriteria{Namespace: namespace, LabelSelector: labelSelector}
 		listObj, err := view.ListObjects(d.GVK, c) //s.List(c)
 		if err != nil {
 			return
@@ -504,7 +504,7 @@ func handleList(d typeinfo.Descriptor, view api.View, labelSelector labels.Selec
 	}
 }
 
-func handlePatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handlePatch(d typeinfo.Descriptor, view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := GetObjectName(r, d)
 		contentType := r.Header.Get("Content-Type")
@@ -528,7 +528,7 @@ func handlePatch(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	}
 }
 
-func handlePatchStatus(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
+func handlePatchStatus(d typeinfo.Descriptor, view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		objName := GetObjectName(r, d)
 		contentType := r.Header.Get("Content-Type")
@@ -554,9 +554,9 @@ func handlePatchStatus(d typeinfo.Descriptor, view api.View) http.HandlerFunc {
 	}
 }
 
-// handleWatch implements watch request/response handling. It delegates watch functionality to the given api.View, only
+// handleWatch implements watch request/response handling. It delegates watch functionality to the given mkapi.View, only
 // passing a callback which encodes the watch event and flushed it to the response stream.
-func handleWatch(d typeinfo.Descriptor, view api.View, labelSelector labels.Selector) http.HandlerFunc {
+func handleWatch(d typeinfo.Descriptor, view mkapi.View, labelSelector labels.Selector) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var (
 			ok           bool
@@ -605,7 +605,7 @@ func handleWatch(d typeinfo.Descriptor, view api.View, labelSelector labels.Sele
 //
 // Example Payload
 // {"kind":"Binding","apiVersion":"v1","metadata":{"name":"a-p4r2l","namespace":"default","uid":"b8124ee8-a0c7-4069-930d-fc5e901675d3"},"target":{"kind":"Node","name":"a-kl827"}}
-func handleCreatePodBinding(view api.View) http.HandlerFunc {
+func handleCreatePodBinding(view mkapi.View) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		log := logr.FromContextOrDiscard(r.Context())
 		d := typeinfo.PodsDescriptor
@@ -760,15 +760,15 @@ func parseLabelSelector(req *http.Request) (labels.Selector, error) {
 	return labels.Parse(raw)
 }
 
-func setMinKAPIConfigDefaults(cfg *api.MinKAPIConfig) {
+func setMinKAPIConfigDefaults(cfg *mkapi.Config) {
 	if cfg.WatchConfig.QueueSize <= 0 {
-		cfg.WatchConfig.QueueSize = api.DefaultWatchQueueSize
+		cfg.WatchConfig.QueueSize = mkapi.DefaultWatchQueueSize
 	}
 	if cfg.WatchConfig.Timeout <= 0 {
-		cfg.WatchConfig.Timeout = api.DefaultWatchTimeout
+		cfg.WatchConfig.Timeout = mkapi.DefaultWatchTimeout
 	}
 	if cfg.KubeConfigPath == "" {
-		cfg.KubeConfigPath = api.DefaultKubeConfigPath
+		cfg.KubeConfigPath = mkapi.DefaultKubeConfigPath
 	}
 	if cfg.Port == 0 {
 		cfg.Port = commonconstants.DefaultMinKAPIPort
