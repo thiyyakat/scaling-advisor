@@ -1,0 +1,14 @@
+# See owner aliases docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
+
+aliases:
+  scaling-advisor-reviewers:
+  - unmarshall
+  - elankath
+  - aaronfern
+  - thiyyakat
+  - takoverflow
+  - gagan16k
+  scaling-advisor-approvers:
+  - unmarshall
+  - elankath
+  - aaronfern
